@@ -96,7 +96,7 @@ pub fn ui(f: &mut Frame, app: &App) {
                 Style::default().fg(Color::Red.into()),
             ),
             CurrentScreen::NoteEdit(_) => Span::styled(
-                "VIM keybinds (Tab) to index checkbox (Alt-Tab) to unindent, (q) to quit",
+                "VIM keybinds (Tab) to indent checkbox (Alt-Tab) to unindent, (q) to quit",
                 Style::default().fg(Color::Red.into()),
             ),
             CurrentScreen::Exiting => {
