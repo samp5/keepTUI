@@ -8,11 +8,11 @@ Run `cargo build --release` and move `./target/release/keep` to your `$PATH`
 ### Pictures!
 The main view (with some notes added)
 
-![main view with some notes added](https://github.com/samp5/keepTUI/blob/main/resources/clip-2024-08-26-14-28-38.jpeg)
+![main view with some notes added](https://github.com/samp5/keepTUI/blob/main/resources/main.jpeg)
 
 Editing a note (with VIM keybinds)
 
-![](https://github.com/samp5/keepTUI/blob/main/resources/clip-2024-08-26-14-29-07.jpeg)
+![](https://github.com/samp5/keepTUI/blob/main/resources/edit.jpeg)
 
 Adding a new note
-![](https://github.com/samp5/keepTUI/blob/main/resources/clip-2024-08-26-14-29-50.jpeg)
+![](https://github.com/samp5/keepTUI/blob/main/resources/edit.jpeg)
