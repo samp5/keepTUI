@@ -12,6 +12,7 @@ pub struct App {
     pub notes: Vec<Note>,
     pub note_focus: Option<usize>,
     pub clipboard: String,
+    pub modified: bool,
 }
 
 impl App {
@@ -21,11 +22,13 @@ impl App {
             notes: items,
             note_focus: None,
             clipboard: String::new(),
+            modified: false,
         };
 
         app
     }
     pub fn add_note(&mut self, title: String) {
+        self.modified = true;
         self.notes.push(Note::new(title));
     }
 
@@ -90,5 +93,6 @@ impl App {
             }
         }
         self.notes.remove(index);
+        self.modified = true;
     }
 }

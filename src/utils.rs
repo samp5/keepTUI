@@ -12,7 +12,7 @@ pub fn complete_item(mut line: String) -> String {
 }
 
 pub fn get_notes_from_file() -> Option<Vec<Note>> {
-    let mut home_path = std::env::var_os("HOME").unwrap();
+    let mut home_path = std::env::var_os("HOME").unwrap_or("/home/sam".into());
     home_path.push("/.config/keep/keep_config.txt");
     let path = std::path::Path::new(&home_path);
     if let Ok(file) = File::open(path) {
@@ -40,7 +40,9 @@ pub fn note_from_line(line: String) -> Note {
 }
 
 pub fn write_notes_to_file(notes: Vec<Note>) -> io::Result<()> {
-    let mut file = File::create("/home/samp/.config/keep/keep_config.txt").unwrap();
+    let mut home_path = std::env::var_os("HOME").unwrap_or("/home/sam".into());
+    home_path.push("/.config/keep/keep_config.txt");
+    let mut file = File::create(home_path).unwrap();
 
     for note in notes {
         let mut content = String::new();
