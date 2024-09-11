@@ -45,9 +45,9 @@ pub fn write_notes_to_file(notes: Vec<Note>) -> io::Result<()> {
     let mut file = File::create(home_path).unwrap();
 
     for note in notes {
-        let mut content = String::new();
-        content.push_str(&note.title);
-        content.push(';');
+        let size = note.items.iter().fold(0, |acc, e| acc + e.len());
+        let mut content = String::with_capacity(size + note.title.len());
+        content.push_str(&(note.title + ";"));
 
         for item in note.items {
             content.push_str(&item);
