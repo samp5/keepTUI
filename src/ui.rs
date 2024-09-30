@@ -1,5 +1,6 @@
 use crate::app::{App, CurrentScreen};
 use crate::vim::{Mode, Transition, Vim};
+use crossterm::event::{KeyCode, KeyEventState, KeyModifiers};
 use ratatui::backend::Backend;
 use ratatui::Terminal;
 use ratatui::{
@@ -16,9 +17,9 @@ pub fn ui(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Min(2),
-            Constraint::Length(3),
+            Constraint::Min(3),
+            Constraint::Percentage(100),
+            Constraint::Min(3),
         ])
         .split(f.size());
 
@@ -35,35 +36,38 @@ pub fn ui(f: &mut Frame, app: &App) {
 
     f.render_widget(title, chunks[0]);
 
-    if let CurrentScreen::Main = &app.current_screen {
-        let number_notes: usize = app.notes.len();
+    match app.current_screen {
+        CurrentScreen::Main | CurrentScreen::Command => {
+            let number_notes: usize = app.notes.len();
 
-        // let constraint_percent: u16 = 100 / (number_notes as u16);
-        let note_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(vec![
-                Constraint::Ratio(1, number_notes as u32);
-                number_notes
-            ])
-            .split(chunks[1]);
+            // let constraint_percent: u16 = 100 / (number_notes as u16);
+            let note_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints(vec![
+                    Constraint::Ratio(1, number_notes as u32);
+                    number_notes
+                ])
+                .split(chunks[1]);
 
-        let active_color = Color::Green;
+            let active_color = Color::Green;
 
-        for i in 0..number_notes {
-            let note = app.notes.get(i).unwrap();
+            for i in 0..number_notes {
+                let note = app.notes.get(i).unwrap();
 
-            let mut note_block = Block::default()
-                .title(Title::from(note.title.clone()).alignment(Alignment::Center))
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded);
+                let mut note_block = Block::default()
+                    .title(Title::from(note.title.clone()).alignment(Alignment::Center))
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded);
 
-            if note.is_focused() {
-                note_block = note_block.border_style(Style::default().fg(active_color));
+                if note.is_focused() {
+                    note_block = note_block.border_style(Style::default().fg(active_color));
+                }
+
+                let note_text = Paragraph::new(note.get_note_text()).block(note_block);
+                f.render_widget(note_text, note_chunks[i]);
             }
-
-            let note_text = Paragraph::new(note.get_note_text()).block(note_block);
-            f.render_widget(note_text, note_chunks[i]);
         }
+        _ => {}
     }
 
     let current_navigation_text = vec![match app.current_screen {
@@ -83,6 +87,10 @@ pub fn ui(f: &mut Frame, app: &App) {
             "Exiting",
             Style::default().fg(ratatui::style::Color::LightRed),
         ),
+        CurrentScreen::Command => Span::styled(
+            "Command Mode",
+            Style::default().fg(ratatui::style::Color::Blue),
+        ),
     }
     .to_owned()];
 
@@ -100,9 +108,13 @@ pub fn ui(f: &mut Frame, app: &App) {
                 Style::default().fg(Color::Red.into()),
             ),
             CurrentScreen::Exiting => {
-                Span::styled("[q]uit", Style::default().fg(Color::Red.into()))
+                Span::styled("[q] to cancel", Style::default().fg(Color::Red.into()))
             }
             CurrentScreen::NewNote => Span::styled(
+                "<ESC> cancel, <ENTER> accept ",
+                Style::default().fg(Color::Red.into()),
+            ),
+            CurrentScreen::Command => Span::styled(
                 "<ESC> cancel, <ENTER> accept ",
                 Style::default().fg(Color::Red.into()),
             ),
@@ -112,16 +124,7 @@ pub fn ui(f: &mut Frame, app: &App) {
     let key_notes_footer =
         Paragraph::new(Line::from(current_key_hint)).block(Block::default().borders(Borders::ALL));
 
-    let footer_chunk = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[2]);
-
-    f.render_widget(mode_footer, footer_chunk[0]);
-    f.render_widget(key_notes_footer, footer_chunk[1]);
-
     if let CurrentScreen::Exiting = &app.current_screen {
-        f.render_widget(Clear, f.size());
         let popup_block = Block::default()
             .title("Y/N")
             .borders(Borders::ALL)
@@ -137,10 +140,15 @@ pub fn ui(f: &mut Frame, app: &App) {
             .wrap(Wrap { trim: false })
             .centered();
 
-        let area = centered_rect(30, 10, f.size());
-
+        let area = centered_rect(30, 50, chunks[1]);
         f.render_widget(exit_paragraph, area);
     }
+    let footer_chunk = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(chunks[2]);
+    f.render_widget(mode_footer, footer_chunk[0]);
+    f.render_widget(key_notes_footer, footer_chunk[1]);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -161,6 +169,48 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+pub fn command_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<String> {
+    let mut textarea = TextArea::default();
+    textarea.set_placeholder_text("cmd");
+    textarea.set_block(Block::default().borders(Borders::ALL));
+
+    textarea.input(crossterm::event::KeyEvent {
+        code: KeyCode::Char(':'),
+        modifiers: KeyModifiers::NONE,
+        kind: crossterm::event::KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
+    loop {
+        terminal.draw(|f| {
+            let widget = textarea.widget();
+            ui(f, app);
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(3),
+                    Constraint::Percentage(100),
+                    Constraint::Min(3),
+                ])
+                .split(f.size());
+            f.render_widget(Clear, chunks[2]);
+            f.render_widget(widget, chunks[2]);
+        })?;
+        match crossterm::event::read()?.into() {
+            Input { key: Key::Esc, .. } => break,
+            Input {
+                key: Key::Enter, ..
+            } => {
+                let source = textarea.lines().to_vec().concat().trim().to_string();
+                return Ok(source);
+            }
+            input => {
+                // TextArea::input returns if the input modified its text
+                textarea.input(input);
+            }
+        }
+    }
+    Ok("".to_string())
 }
 
 pub fn new_note<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {

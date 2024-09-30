@@ -39,7 +39,7 @@ pub fn note_from_line(line: String) -> Note {
     note
 }
 
-pub fn write_notes_to_file(notes: Vec<Note>) -> io::Result<()> {
+pub fn write_notes_to_file(notes: &Vec<Note>) -> io::Result<()> {
     let mut home_path = std::env::var_os("HOME").unwrap_or("/home/sam".into());
     home_path.push("/.config/keep/keep_config.txt");
     let mut file = File::create(home_path).unwrap();
@@ -47,9 +47,9 @@ pub fn write_notes_to_file(notes: Vec<Note>) -> io::Result<()> {
     for note in notes {
         let size = note.items.iter().fold(0, |acc, e| acc + e.len());
         let mut content = String::with_capacity(size + note.title.len());
-        content.push_str(&(note.title + ";"));
+        content.push_str(&(note.title.clone() + ";"));
 
-        for item in note.items {
+        for item in &note.items {
             content.push_str(&item);
             content.push_str(";");
         }

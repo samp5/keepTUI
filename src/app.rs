@@ -5,6 +5,7 @@ pub enum CurrentScreen {
     NoteEdit(usize),
     Exiting,
     NewNote,
+    Command,
 }
 
 pub struct App {

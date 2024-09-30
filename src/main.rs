@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut app = App::new(notes);
         let res = run_app(&mut terminal, &mut app);
         if let Ok(true) = res {
-            utils::write_notes_to_file(app.notes)?;
+            utils::write_notes_to_file(&app.notes)?;
         }
         disable_raw_mode()?;
         execute!(
@@ -71,6 +71,16 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                     KeyCode::Char('h') => {
                         app.move_focus_left();
                     }
+                    KeyCode::Char(':') => {
+                        app.current_screen = CurrentScreen::Command;
+                        let res = crate::ui::command_mode(terminal, app)?;
+                        match res.as_str() {
+                            ":wq" => return Ok(true),
+                            ":q!" => return Ok(false),
+                            _ => {}
+                        }
+                        app.current_screen = CurrentScreen::Main;
+                    }
                     KeyCode::Char('e') | KeyCode::Enter => {
                         if let Some(note) = app.get_focused_note() {
                             app.current_screen = CurrentScreen::NoteEdit(note);
@@ -80,8 +90,6 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                     }
                     KeyCode::Char('a') => {
                         app.current_screen = CurrentScreen::NewNote;
-                        ui::new_note(terminal, app)?;
-                        app.current_screen = CurrentScreen::Main;
                     }
                     KeyCode::Char('D') => {
                         if let Some(note) = app.get_focused_note() {
@@ -91,7 +99,14 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                     _ => {}
                 },
                 app::CurrentScreen::NoteEdit(_) => {}
-                app::CurrentScreen::NewNote => {}
+                app::CurrentScreen::NewNote => {
+                    ui::new_note(terminal, app)?;
+                    app.current_screen = CurrentScreen::Main;
+                }
+                app::CurrentScreen::Command => match key.code {
+                    KeyCode::Esc => app.current_screen = CurrentScreen::Main,
+                    _ => {}
+                },
             }
         }
     }
