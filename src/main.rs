@@ -10,6 +10,7 @@ use ratatui::{
     Terminal,
 };
 use std::{self, io};
+use ui::send_err;
 
 mod app;
 mod note;
@@ -77,7 +78,17 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                         match res.as_str() {
                             ":wq" => return Ok(true),
                             ":q!" => return Ok(false),
-                            _ => {}
+                            ":q" => {
+                                if !app.modified {
+                                    return Ok(false);
+                                } else {
+                                    send_err("Unsaved changes, use :q! to discard", terminal, app)?;
+                                }
+                            }
+                            _ => {
+                                let message = res + " not valid command";
+                                send_err(message.as_str(), terminal, app)?;
+                            }
                         }
                         app.current_screen = CurrentScreen::Main;
                     }

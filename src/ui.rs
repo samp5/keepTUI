@@ -1,6 +1,6 @@
 use crate::app::{App, CurrentScreen};
 use crate::vim::{Mode, Transition, Vim};
-use crossterm::event::{KeyCode, KeyEventState, KeyModifiers};
+use crossterm::event::{read, KeyCode, KeyEventState, KeyModifiers};
 use ratatui::backend::Backend;
 use ratatui::Terminal;
 use ratatui::{
@@ -170,6 +170,33 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(popup_layout[1])[1]
 }
+pub fn send_err<B: Backend>(
+    message: &str,
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+) -> io::Result<()> {
+    let text = Span::styled(
+        message.to_string() + " - Press any key to continue",
+        Style::default().fg(Color::LightRed.into()),
+    );
+    terminal.draw(|f| {
+        ui(f, app);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(3),
+                Constraint::Percentage(100),
+                Constraint::Min(3),
+            ])
+            .split(f.size());
+        let err_block =
+            Paragraph::new(Line::from(text)).block(Block::default().borders(Borders::ALL));
+        f.render_widget(Clear, chunks[2]);
+        f.render_widget(err_block, chunks[2]);
+    })?;
+    read()?;
+    Ok(())
+}
 pub fn command_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<String> {
     let mut textarea = TextArea::default();
     textarea.set_placeholder_text("cmd");
@@ -269,6 +296,9 @@ pub fn vim_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Re
         }
     }
     let note = app.notes.get_mut(index).unwrap();
+    if note.items != text_area.lines().to_vec() {
+        app.modified = true;
+    }
     note.items = text_area.lines().to_vec();
     Ok(())
 }
