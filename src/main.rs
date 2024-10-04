@@ -11,6 +11,7 @@ use ratatui::{
 };
 use std::{self, io};
 use ui::send_err;
+use ui::send_message;
 
 mod app;
 mod note;
@@ -56,7 +57,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                 app::CurrentScreen::Exiting => match key.code {
                     KeyCode::Char('y' | 'Y') => return Ok(true),
                     KeyCode::Char('n' | 'N') => return Ok(false),
-                    KeyCode::Char('q' | 'Q') => {
+                    KeyCode::Esc => {
                         app.current_screen = CurrentScreen::Main;
                         continue;
                     }
@@ -74,20 +75,29 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                     }
                     KeyCode::Char(':') => {
                         app.current_screen = CurrentScreen::Command;
-                        let res = crate::ui::command_mode(terminal, app)?;
-                        match res.as_str() {
-                            ":wq" => return Ok(true),
-                            ":q!" => return Ok(false),
-                            ":q" => {
-                                if !app.modified {
-                                    return Ok(false);
-                                } else {
-                                    send_err("Unsaved changes, use :q! to discard", terminal, app)?;
+                        let res = crate::ui::command_mode(terminal, app);
+                        if let Ok(s) = res {
+                            match s.as_str() {
+                                ":wq" => return Ok(true),
+                                ":q!" => return Ok(false),
+                                ":help" | ":info" | ":h" | ":i" => {
+                                    send_message("wq - write changes and quit, q! - dicard changes and quit, q - quit, help - display this message", terminal, app)?;
                                 }
-                            }
-                            _ => {
-                                let message = res + " not valid command";
-                                send_err(message.as_str(), terminal, app)?;
+                                ":q" => {
+                                    if !app.modified {
+                                        return Ok(false);
+                                    } else {
+                                        send_err(
+                                            "Unsaved changes, use :q! to discard",
+                                            terminal,
+                                            app,
+                                        )?;
+                                    }
+                                }
+                                _ => {
+                                    let message = s + " not valid command";
+                                    send_err(message.as_str(), terminal, app)?;
+                                }
                             }
                         }
                         app.current_screen = CurrentScreen::Main;
@@ -101,6 +111,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                     }
                     KeyCode::Char('a') => {
                         app.current_screen = CurrentScreen::NewNote;
+                        ui::new_note(terminal, app)?;
+                        app.current_screen = CurrentScreen::Main;
                     }
                     KeyCode::Char('D') => {
                         if let Some(note) = app.get_focused_note() {
@@ -110,10 +122,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                     _ => {}
                 },
                 app::CurrentScreen::NoteEdit(_) => {}
-                app::CurrentScreen::NewNote => {
-                    ui::new_note(terminal, app)?;
-                    app.current_screen = CurrentScreen::Main;
-                }
+                app::CurrentScreen::NewNote => {}
                 app::CurrentScreen::Command => match key.code {
                     KeyCode::Esc => app.current_screen = CurrentScreen::Main,
                     _ => {}

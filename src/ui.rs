@@ -2,6 +2,7 @@ use crate::app::{App, CurrentScreen};
 use crate::vim::{Mode, Transition, Vim};
 use crossterm::event::{read, KeyCode, KeyEventState, KeyModifiers};
 use ratatui::backend::Backend;
+use ratatui::style::Stylize;
 use ratatui::Terminal;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -108,7 +109,7 @@ pub fn ui(f: &mut Frame, app: &App) {
                 Style::default().fg(Color::Red.into()),
             ),
             CurrentScreen::Exiting => {
-                Span::styled("[q] to cancel", Style::default().fg(Color::Red.into()))
+                Span::styled("<Esc> to cancel", Style::default().fg(Color::Red.into()))
             }
             CurrentScreen::NewNote => Span::styled(
                 "<ESC> cancel, <ENTER> accept ",
@@ -170,6 +171,33 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(popup_layout[1])[1]
 }
+pub fn send_message<B: Backend>(
+    message: &str,
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+) -> io::Result<()> {
+    let text = Span::styled(
+        message.to_string() + " - Press any key to continue",
+        Style::default().fg(Color::LightBlue.into()),
+    );
+    terminal.draw(|f| {
+        ui(f, app);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(3),
+                Constraint::Percentage(100),
+                Constraint::Min(3),
+            ])
+            .split(f.size());
+        let err_block =
+            Paragraph::new(Line::from(text)).block(Block::default().borders(Borders::ALL));
+        f.render_widget(Clear, chunks[2]);
+        f.render_widget(err_block, chunks[2]);
+    })?;
+    read()?;
+    Ok(())
+}
 pub fn send_err<B: Backend>(
     message: &str,
     terminal: &mut Terminal<B>,
@@ -200,7 +228,11 @@ pub fn send_err<B: Backend>(
 pub fn command_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<String> {
     let mut textarea = TextArea::default();
     textarea.set_placeholder_text("cmd");
-    textarea.set_block(Block::default().borders(Borders::ALL));
+    textarea.set_block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(Span::from("Command Mode").style(Style::default().fg(Color::Yellow))),
+    );
 
     textarea.input(crossterm::event::KeyEvent {
         code: KeyCode::Char(':'),
@@ -224,7 +256,9 @@ pub fn command_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io
             f.render_widget(widget, chunks[2]);
         })?;
         match crossterm::event::read()?.into() {
-            Input { key: Key::Esc, .. } => break,
+            Input { key: Key::Esc, .. } => {
+                return Err(io::Error::new(io::ErrorKind::Other, "escape"))
+            }
             Input {
                 key: Key::Enter, ..
             } => {
@@ -237,7 +271,6 @@ pub fn command_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io
             }
         }
     }
-    Ok("".to_string())
 }
 
 pub fn new_note<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
