@@ -1,8 +1,8 @@
 use crate::app::{App, CurrentScreen};
 use crate::vim::{Mode, Transition, Vim};
+use anyhow::Result as AResult;
 use crossterm::event::{read, KeyCode, KeyEventState, KeyModifiers};
 use ratatui::backend::Backend;
-use ratatui::style::Stylize;
 use ratatui::Terminal;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -39,7 +39,7 @@ pub fn ui(f: &mut Frame, app: &App) {
 
     match app.current_screen {
         CurrentScreen::Main | CurrentScreen::Command => {
-            let number_notes: usize = app.notes.len();
+            let number_notes: usize = app.displaying.len();
 
             // let constraint_percent: u16 = 100 / (number_notes as u16);
             let note_chunks = Layout::default()
@@ -52,20 +52,18 @@ pub fn ui(f: &mut Frame, app: &App) {
 
             let active_color = Color::Green;
 
-            for i in 0..number_notes {
-                let note = app.notes.get(i).unwrap();
-
-                let mut note_block = Block::default()
-                    .title(Title::from(note.title.clone()).alignment(Alignment::Center))
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded);
-
-                if note.is_focused() {
-                    note_block = note_block.border_style(Style::default().fg(active_color));
+            for (index, id) in app.displaying.iter().enumerate() {
+                if let Some(note) = app.get_note(id) {
+                    let mut note_block = Block::default()
+                        .title(Title::from(note.title.clone()).alignment(Alignment::Center))
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded);
+                    if note.is_focused() {
+                        note_block = note_block.border_style(Style::default().fg(active_color));
+                    }
+                    let note_text = Paragraph::new(note.get_note_text()).block(note_block);
+                    f.render_widget(note_text, note_chunks[index]);
                 }
-
-                let note_text = Paragraph::new(note.get_note_text()).block(note_block);
-                f.render_widget(note_text, note_chunks[i]);
             }
         }
         _ => {}
@@ -76,7 +74,7 @@ pub fn ui(f: &mut Frame, app: &App) {
             "Normal Mode",
             Style::default().fg(ratatui::style::Color::Green),
         ),
-        CurrentScreen::NoteEdit(_) => Span::styled(
+        CurrentScreen::NoteEdit => Span::styled(
             "Editing Note",
             Style::default().fg(ratatui::style::Color::Yellow),
         ),
@@ -104,7 +102,7 @@ pub fn ui(f: &mut Frame, app: &App) {
                 "[q]uit [e]dit [D]elete [a]dd note <h> left <l> right",
                 Style::default().fg(Color::Red.into()),
             ),
-            CurrentScreen::NoteEdit(_) => Span::styled(
+            CurrentScreen::NoteEdit => Span::styled(
                 "VIM keybinds (Tab) to indent checkbox (Alt-Tab) to unindent, (q) to quit",
                 Style::default().fg(Color::Red.into()),
             ),
@@ -240,6 +238,7 @@ pub fn command_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io
         kind: crossterm::event::KeyEventKind::Press,
         state: KeyEventState::NONE,
     });
+
     loop {
         terminal.draw(|f| {
             let widget = textarea.widget();
@@ -300,11 +299,18 @@ pub fn new_note<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Re
     Ok(())
 }
 
-pub fn vim_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
-    let index = app.get_focused_note().unwrap();
-    let note = app.notes.get(index).unwrap();
+pub fn vim_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<()> {
+    let mut note;
+    match app.focused() {
+        Some(id) => match app.get_note(&id) {
+            Some(n) => note = n,
+            None => return Ok(()),
+        },
+        None => return Ok(()),
+    }
+
     let mut text_area = TextArea::new(note.get_note_text_vec());
-    text_area.set_yank_text(&app.clipboard);
+    text_area.set_yank_text(app.clipboard.clone());
     text_area.set_block(Mode::Normal.block(&note.title));
     text_area.set_cursor_style(Mode::Normal.cursor_style());
     let mut vim = Vim::new(Mode::Normal);
@@ -323,15 +329,19 @@ pub fn vim_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Re
             Transition::Nop | Transition::Mode(_) => vim,
             Transition::Pending(input) => vim.with_pending(input),
             Transition::Quit => {
-                app.clipboard = text_area.yank_text();
                 break;
             }
         }
     }
-    let note = app.notes.get_mut(index).unwrap();
-    if note.items != text_area.lines().to_vec() {
-        app.modified = true;
+
+    match text_area.yank_text() {
+        s if s.len() > 0 => app.clipboard = s,
+        _ => (),
     }
-    note.items = text_area.lines().to_vec();
+
+    app.focused()
+        .and_then(|id| app.get_mut_note(&id))
+        .map(|n| n.items = text_area.into_lines());
+
     Ok(())
 }

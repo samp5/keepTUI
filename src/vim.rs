@@ -125,7 +125,6 @@ impl Vim {
                     } => {
                         textarea.move_cursor(CursorMove::Head);
                         textarea.delete_line_by_end();
-                        textarea.set_yank_text(crate::utils::complete_item(textarea.yank_text()));
                         textarea.paste();
                         textarea.move_cursor(CursorMove::Head);
                     }

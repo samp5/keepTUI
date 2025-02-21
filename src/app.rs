@@ -1,99 +1,203 @@
-use crate::note::Note;
+use std::{
+    collections::BTreeMap,
+    fs::{create_dir, OpenOptions},
+    io::Write,
+    ops::Deref,
+    path::PathBuf,
+};
+
+use anyhow::Context;
+use anyhow::Result as AResult;
+
+use crate::note::{Note, NoteCollection, NoteFactory, NoteID};
+use std::io::{Error as IOError, ErrorKind as IOErrorKind, Result as IOResult};
 
 pub enum CurrentScreen {
     Main,
-    NoteEdit(usize),
+    NoteEdit,
     Exiting,
     NewNote,
     Command,
 }
 
+pub struct Config {
+    pub data_path: Box<PathBuf>,
+}
+
+impl Config {
+    pub fn new() -> IOResult<Config> {
+        let home = std::env::var("HOME").map_err(|_| {
+            IOError::new(IOErrorKind::NotFound, "Could not find $HOME in environment")
+        })?;
+        let path = home + "/.keepTUI/notes";
+        Ok(Config {
+            data_path: Box::new(PathBuf::from(path)),
+        })
+    }
+}
+
 pub struct App {
     pub current_screen: CurrentScreen,
-    pub notes: Vec<Note>,
-    pub note_focus: Option<usize>,
+    pub notes: NoteCollection,
+    pub displaying: Vec<NoteID>,
+    pub note_focus: Option<NoteID>,
     pub clipboard: String,
     pub modified: bool,
+    pub note_factory: NoteFactory,
+    pub config: Config,
 }
 
 impl App {
-    pub fn new(items: Vec<Note>) -> App {
-        let app = App {
+    pub fn new(config: Config) -> AResult<App> {
+        let notes = App::read_from_file(&config)?;
+        let displaying = notes
+            .notes
+            .iter()
+            .filter(|(_, n)| n.displayed())
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+
+        Ok(App {
             current_screen: CurrentScreen::Main,
-            notes: items,
+            config,
+            notes,
+            displaying,
             note_focus: None,
             clipboard: String::new(),
             modified: false,
-        };
-
-        app
+            note_factory: NoteFactory::new(),
+        })
     }
+
+    pub fn read_from_file(config: &Config) -> AResult<NoteCollection> {
+        if !config
+            .data_path
+            .parent()
+            .context(format!(
+                "{:#?} does not have a parent directory",
+                config.data_path
+            ))?
+            .exists()
+        {
+            create_dir(config.data_path.parent().context(format!(
+                "{:#?} does not have a parent directory",
+                config.data_path
+            ))?)
+            .context(format!("failed to create path {:#?}", config.data_path))?
+        }
+
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true) // for creation requirement
+            .open(config.data_path.deref())
+            .context(format!("Could not open {:#?}", config.data_path))?;
+
+        if file
+            .metadata()
+            .context(format!("Could not open {:#?}", config.data_path))?
+            .len()
+            == 0
+        {
+            Ok(NoteCollection {
+                notes: BTreeMap::new(),
+            })
+        } else {
+            let notes: NoteCollection = serde_json::from_reader(file).context(format!(
+                "serde_json failed to read from file at {:#?}",
+                config.data_path
+            ))?;
+            Ok(notes)
+        }
+    }
+
+    pub fn write_data(&self) -> IOResult<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(self.config.data_path.deref())?;
+        let serialized = serde_json::to_string(&self.notes)?;
+        file.write(serialized.as_bytes())?;
+        Ok(())
+    }
+
     pub fn add_note(&mut self, title: String) {
-        self.modified = true;
-        self.notes.push(Note::new(title));
+        let new_note = self.note_factory.create_note(title);
+        self.displaying.push(new_note.id);
+        self.notes.add(new_note);
     }
 
-    pub fn move_focus_right(&mut self) {
-        if let Some(note_focus) = self.note_focus {
-            self.notes.get_mut(note_focus).unwrap().unfocus();
-            self.note_focus = Some((note_focus + 1) % self.notes.len());
-            self.notes
-                .get_mut(self.note_focus.unwrap())
-                .unwrap()
-                .focus();
-        } else {
-            if let Some(_) = self.notes.first() {
-                self.note_focus = Some(0);
-                self.notes
-                    .get_mut(self.note_focus.unwrap())
-                    .unwrap()
-                    .focus();
-            }
+    pub fn focus_right(&mut self) {
+        if self.focused().is_none() {
+            self.focus(self.displaying.first().copied());
+        }
+
+        let prev_focus = self.unfocus().unwrap();
+
+        match self
+            .displaying
+            .iter()
+            .skip_while(|&&id| id != prev_focus)
+            .nth(1)
+        {
+            Some(&id) => self.focus(Some(id)),
+            None => self.focus(self.displaying.first().copied()),
+        }
+    }
+    pub fn focus_left(&mut self) {
+        if self.focused().is_none() {
+            self.focus(self.displaying.last().copied());
+        }
+
+        let prev_focus = self.unfocus();
+
+        match self
+            .displaying
+            .iter()
+            .rev()
+            .skip_while(|&&id| Some(id) != prev_focus)
+            .nth(1)
+        {
+            Some(&id) => self.focus(Some(id)),
+            None => self.focus(self.displaying.last().copied()),
         }
     }
 
-    pub fn move_focus_left(&mut self) {
-        if let Some(note_focus) = self.note_focus {
-            self.notes.get_mut(note_focus).unwrap().unfocus();
-            self.note_focus = if note_focus != 0 {
-                Some(note_focus - 1)
-            } else {
-                Some(self.notes.len() - 1)
-            };
-            self.notes
-                .get_mut(self.note_focus.unwrap())
-                .unwrap()
-                .focus();
-        } else {
-            if let Some(_) = self.notes.first() {
-                self.note_focus = Some(self.notes.len() - 1);
-                self.notes
-                    .get_mut(self.note_focus.unwrap())
-                    .unwrap()
-                    .focus();
-            }
-        }
+    pub fn focus(&mut self, id: Option<NoteID>) {
+        self.note_focus = id;
+        id.map(|id| self.get_mut_note(&id).map(|note| note.focus()));
     }
 
-    pub fn get_focused_note(&self) -> Option<usize> {
-        if let Some(note_index) = self.note_focus {
-            Some(note_index)
-        } else {
-            None
-        }
+    pub fn unfocus(&mut self) -> Option<NoteID> {
+        self.note_focus
+            .and_then(|id| self.get_mut_note(&id))
+            .map(|note| note.unfocus());
+        self.note_focus.take()
+    }
+    pub fn get_mut_note(&mut self, id: &NoteID) -> Option<&mut Note> {
+        return self.notes.notes.get_mut(&id);
     }
 
-    pub fn delete_note(&mut self, index: usize) {
-        if let Some(note_index) = &mut self.note_focus {
-            if *note_index != 0 {
-                *note_index = if *note_index >= index {
-                    *note_index - 1
-                } else {
-                    *note_index
-                }
-            }
-        }
-        self.notes.remove(index);
-        self.modified = true;
+    pub fn get_note(&self, id: &NoteID) -> Option<&Note> {
+        return self.notes.notes.get(&id);
+    }
+
+    pub fn focused(&self) -> Option<NoteID> {
+        return self.note_focus;
+    }
+
+    pub fn delete(&mut self, id: NoteID) {
+        self.displaying.retain(|note_id| *note_id != id);
+        self.notes.remove(&id);
+    }
+
+    pub fn log(msg: impl AsRef<str>) -> AResult<()> {
+        let mut file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open("/home/sam/dev/keepTUI/log.txt")?;
+
+        file.write(msg.as_ref().as_bytes())?;
+        Ok(())
     }
 }
