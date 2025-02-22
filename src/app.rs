@@ -21,7 +21,7 @@ pub enum CurrentScreen {
 }
 
 pub struct Config {
-    pub data_path: Box<PathBuf>,
+    pub data_path: PathBuf,
 }
 
 impl Config {
@@ -31,7 +31,7 @@ impl Config {
         })?;
         let path = home + "/.keepTUI/notes";
         Ok(Config {
-            data_path: Box::new(PathBuf::from(path)),
+            data_path: PathBuf::from(path),
         })
     }
 }
@@ -56,6 +56,7 @@ impl App {
             .filter(|(_, n)| n.displayed())
             .map(|(id, _)| id.clone())
             .collect::<Vec<_>>();
+        let max_id = notes.max_id();
 
         Ok(App {
             current_screen: CurrentScreen::Main,
@@ -65,7 +66,7 @@ impl App {
             note_focus: None,
             clipboard: String::new(),
             modified: false,
-            note_factory: NoteFactory::new(),
+            note_factory: NoteFactory::new(max_id),
         })
     }
 
@@ -111,11 +112,14 @@ impl App {
         }
     }
 
-    pub fn write_data(&self) -> IOResult<()> {
+    pub fn write_data(&mut self) -> IOResult<()> {
         let mut file = OpenOptions::new()
             .write(true)
             .truncate(true)
             .open(self.config.data_path.deref())?;
+
+        let _ = self.unfocus(); // remove any focus
+
         let serialized = serde_json::to_string(&self.notes)?;
         file.write(serialized.as_bytes())?;
         Ok(())
@@ -130,23 +134,26 @@ impl App {
     pub fn focus_right(&mut self) {
         if self.focused().is_none() {
             self.focus(self.displaying.first().copied());
+            return;
         }
 
-        let prev_focus = self.unfocus().unwrap();
+        let prev_focus = self.unfocus();
 
         match self
             .displaying
             .iter()
-            .skip_while(|&&id| id != prev_focus)
+            .skip_while(|&&id| Some(id) != prev_focus)
             .nth(1)
         {
             Some(&id) => self.focus(Some(id)),
             None => self.focus(self.displaying.first().copied()),
         }
     }
+
     pub fn focus_left(&mut self) {
         if self.focused().is_none() {
             self.focus(self.displaying.last().copied());
+            return;
         }
 
         let prev_focus = self.unfocus();
@@ -175,15 +182,15 @@ impl App {
         self.note_focus.take()
     }
     pub fn get_mut_note(&mut self, id: &NoteID) -> Option<&mut Note> {
-        return self.notes.notes.get_mut(&id);
+        self.notes.notes.get_mut(&id)
     }
 
     pub fn get_note(&self, id: &NoteID) -> Option<&Note> {
-        return self.notes.notes.get(&id);
+        self.notes.notes.get(&id)
     }
 
     pub fn focused(&self) -> Option<NoteID> {
-        return self.note_focus;
+        self.note_focus
     }
 
     pub fn delete(&mut self, id: NoteID) {

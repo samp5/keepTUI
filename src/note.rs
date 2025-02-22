@@ -8,7 +8,7 @@ pub struct NoteID(u16);
 impl NoteID {
     pub fn next(&mut self) -> NoteID {
         self.0 += 1;
-        NoteID(self.0 - 1)
+        NoteID(self.0)
     }
 }
 
@@ -34,6 +34,10 @@ impl NoteCollection {
     pub fn remove(&mut self, id: &NoteID) {
         self.notes.remove(&id);
     }
+
+    pub fn max_id(&self) -> Option<NoteID> {
+        self.notes.last_key_value().map(|(&id, _)| id)
+    }
 }
 
 pub struct NoteFactory {
@@ -41,8 +45,10 @@ pub struct NoteFactory {
 }
 
 impl NoteFactory {
-    pub fn new() -> NoteFactory {
-        NoteFactory { note_id: NoteID(0) }
+    pub fn new(start_id: Option<NoteID>) -> NoteFactory {
+        start_id.map_or(NoteFactory { note_id: NoteID(0) }, |id| NoteFactory {
+            note_id: id,
+        })
     }
 
     pub fn create_note(&mut self, title: String) -> Note {
@@ -54,14 +60,10 @@ impl NoteFactory {
             displayed: true,
         }
     }
-
-    pub fn next_id(&self) -> NoteID {
-        self.note_id
-    }
 }
 
 impl Note {
-    pub fn get_note_text(&self) -> String {
+    pub fn text(&self) -> String {
         let mut ret = String::new();
         for item in &self.items {
             ret += &item;
@@ -70,7 +72,7 @@ impl Note {
         ret
     }
 
-    pub fn get_note_text_vec(&self) -> Vec<String> {
+    pub fn text_vec(&self) -> Vec<String> {
         self.items.clone()
     }
 
