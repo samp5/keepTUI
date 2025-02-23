@@ -21,8 +21,10 @@ impl Mode {
             Self::Visual => "[y]ank, [d]elete",
             Self::Operator(_) => "move cursor to apply operator",
         };
+
         let mode = format!("{} MODE ({})", self, help);
         let note_title = format!("{}", note_title);
+
         Block::default()
             .style(Style::default().fg(Color::Gray))
             .borders(Borders::ALL)
@@ -123,10 +125,22 @@ impl Vim {
                     Input {
                         key: Key::Enter, ..
                     } => {
+                        let (row, col) = textarea.cursor();
+                        let yank_text = textarea.yank_text();
                         textarea.move_cursor(CursorMove::Head);
-                        textarea.delete_line_by_end();
-                        textarea.paste();
-                        textarea.move_cursor(CursorMove::Head);
+                        textarea.start_selection();
+                        textarea.move_cursor(CursorMove::End);
+                        textarea.cut();
+                        let mut line = textarea.yank_text();
+                        if let Some(index) = line.find("[ ]") {
+                            line.replace_range(..(index + "[ ]".len()), "[x]")
+                        } else if let Some(index) = line.find("[x]") {
+                            line.replace_range(..(index + "[x]".len()), "[ ]")
+                        }
+                        textarea.insert_str(line);
+
+                        textarea.set_yank_text(yank_text);
+                        textarea.move_cursor(CursorMove::Jump(row as u16, col as u16))
                     }
                     Input {
                         key: Key::Char('h'),
@@ -239,8 +253,7 @@ impl Vim {
                     } => {
                         textarea.move_cursor(CursorMove::End);
                         textarea.insert_newline();
-                        textarea.set_yank_text("[ ] ");
-                        textarea.paste();
+                        textarea.insert_str("[ ] ");
                         return Transition::Mode(Mode::Insert);
                     }
                     Input {
@@ -415,12 +428,39 @@ impl Vim {
                     ..
                 } => Transition::Mode(Mode::Normal),
                 Input {
+                    key: Key::Enter,
+                    ctrl: true,
+                    ..
+                } => {
+                    let (row, col) = textarea.cursor();
+                    let yank_text = textarea.yank_text();
+
+                    textarea.move_cursor(CursorMove::Head);
+                    textarea.start_selection();
+                    textarea.move_cursor(CursorMove::End);
+                    textarea.cut();
+                    let mut line = textarea.yank_text();
+
+                    if let Some(index) = line.find("[ ]") {
+                        line.replace_range(..(index + "[ ]".len()), "[x]")
+                    } else if let Some(index) = line.find("[x]") {
+                        line.replace_range(..(index + "[x]".len()), "[ ]")
+                    }
+
+                    textarea.insert_str(line);
+
+                    textarea.set_yank_text(yank_text);
+                    textarea.move_cursor(CursorMove::Jump(row as u16, col as u16));
+
+                    return Transition::Mode(Mode::Insert);
+                }
+                Input {
                     key: Key::Enter, ..
                 } => {
                     textarea.move_cursor(CursorMove::End);
                     textarea.insert_newline();
-                    textarea.set_yank_text("[ ] ");
-                    textarea.paste();
+                    textarea.insert_str("[ ] ");
+
                     return Transition::Mode(Mode::Insert);
                 }
                 input => {

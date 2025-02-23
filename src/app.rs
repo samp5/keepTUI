@@ -1,16 +1,20 @@
 use std::{
     collections::BTreeMap,
+    env::args,
     fs::{create_dir, OpenOptions},
     io::Write,
     ops::Deref,
-    path::PathBuf,
+    process::exit,
 };
 
 use anyhow::Context;
 use anyhow::Result as AResult;
 
-use crate::note::{Note, NoteCollection, NoteFactory, NoteID};
-use std::io::{Error as IOError, ErrorKind as IOErrorKind, Result as IOResult};
+use crate::{
+    config::{Config, UserConfig},
+    note::{Note, NoteCollection, NoteFactory, NoteID},
+};
+use std::io::Result as IOResult;
 
 pub enum CurrentScreen {
     Main,
@@ -20,19 +24,27 @@ pub enum CurrentScreen {
     Command,
 }
 
-pub struct Config {
-    pub data_path: PathBuf,
-}
+impl CurrentScreen {
+    pub fn navigation_text(&self) -> &str {
+        match &self {
+            CurrentScreen::Main => "Normal Mode",
+            CurrentScreen::NoteEdit => "Editing Note",
+            CurrentScreen::Exiting => "Exiting",
+            CurrentScreen::NewNote => "New Note",
+            CurrentScreen::Command => "Command Mode",
+        }
+    }
 
-impl Config {
-    pub fn new() -> IOResult<Config> {
-        let home = std::env::var("HOME").map_err(|_| {
-            IOError::new(IOErrorKind::NotFound, "Could not find $HOME in environment")
-        })?;
-        let path = home + "/.keepTUI/notes";
-        Ok(Config {
-            data_path: PathBuf::from(path),
-        })
+    pub fn key_hints(&self) -> &str {
+        match &self {
+            CurrentScreen::Main => "[q]uit [e]dit [D]elete [a]dd note <h> left <l> right",
+            CurrentScreen::NoteEdit => {
+                "VIM keybinds (Tab) to indent checkbox (Alt-Tab) to unindent"
+            }
+            CurrentScreen::Exiting => "<Esc> to cancel",
+            CurrentScreen::NewNote => "<ESC> cancel, <ENTER> accept ",
+            CurrentScreen::Command => "<ESC> cancel, <ENTER> accept ",
+        }
     }
 }
 
@@ -50,6 +62,7 @@ pub struct App {
 impl App {
     pub fn new(config: Config) -> AResult<App> {
         let notes = App::read_from_file(&config)?;
+
         let displaying = notes
             .notes
             .iter()
@@ -198,13 +211,38 @@ impl App {
         self.notes.remove(&id);
     }
 
-    pub fn log(msg: impl AsRef<str>) -> AResult<()> {
-        let mut file = OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open("/home/sam/dev/keepTUI/log.txt")?;
+    fn dump_config() {
+        print!(
+            "{}",
+            toml::to_string_pretty(&UserConfig::default()).unwrap()
+        );
+    }
 
-        file.write(msg.as_ref().as_bytes())?;
+    pub fn parse_args() -> IOResult<()> {
+        for arg in args().into_iter().skip(1) {
+            match arg.as_str() {
+                "--help" => {
+                    App::print_long_help(true);
+                    exit(0);
+                }
+                "-h" => {
+                    App::print_short_help(true);
+                    exit(0);
+                }
+                "-d" | "--dump-config" => {
+                    App::dump_config();
+                    exit(0);
+                }
+                "-c" | "--config" => {
+                    App::config_info();
+                    exit(0);
+                }
+                other => {
+                    App::unrecognized_option(other);
+                    exit(0);
+                }
+            }
+        }
         Ok(())
     }
 }

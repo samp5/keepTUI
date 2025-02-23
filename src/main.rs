@@ -1,6 +1,6 @@
-use crate::ui::ui;
-use anyhow::{Context, Result as AResult};
-use app::{App, Config, CurrentScreen};
+use anyhow::Result as AResult;
+use app::{App, CurrentScreen};
+use config::Config;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -11,16 +11,20 @@ use ratatui::{
     Terminal,
 };
 use std::{self, io};
-use ui::{command_mode, new_note, send_err, send_message, vim_mode};
+use ui::{command_mode, new_note, vim_mode, UI};
 
 mod app;
+mod config;
 mod note;
 mod ui;
 mod vim;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    App::parse_args()?;
+
     let config = Config::new()?;
     let mut app = App::new(config)?;
+
     enable_raw_mode()?;
 
     let mut stdout = io::stdout();
@@ -47,7 +51,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<()> {
     loop {
-        terminal.draw(|f| ui(f, app));
+        let ui = UI::new(app);
+        terminal.draw(|f| ui.run(f))?;
         if let Event::Key(key) = event::read()? {
             if key.kind == event::KeyEventKind::Release {
                 continue;
@@ -72,6 +77,12 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<()>
                     KeyCode::Char('q') => {
                         app.current_screen = CurrentScreen::Exiting;
                     }
+                    KeyCode::Char('j') => {
+                        app.focus_right();
+                    }
+                    KeyCode::Char('k') => {
+                        app.focus_right();
+                    }
                     KeyCode::Char('l') => {
                         app.focus_right();
                     }
@@ -84,27 +95,26 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<()>
                         if let Ok(s) = res {
                             match s.as_str() {
                                 ":wq" => {
-                                    app.write_data();
+                                    app.write_data()?;
                                     return Ok(());
                                 }
                                 ":q!" => return Ok(()),
                                 ":help" | ":info" | ":h" | ":i" => {
-                                    send_message("wq - write changes and quit, q! - dicard changes and quit, q - quit, help - display this message", terminal, app)?;
+                                    UI::new(app).send_message("wq - write changes and quit, q! - dicard changes and quit, q - quit, help - display this message", terminal)?;
                                 }
                                 ":q" => {
                                     if !app.modified {
                                         return Ok(());
                                     } else {
-                                        send_err(
+                                        UI::new(app).send_err(
                                             "Unsaved changes, use :q! to discard",
                                             terminal,
-                                            app,
                                         )?;
                                     }
                                 }
                                 _ => {
                                     let message = s + " not valid command";
-                                    send_err(message.as_str(), terminal, app)?;
+                                    UI::new(app).send_err(message.as_str(), terminal)?;
                                 }
                             }
                         }
