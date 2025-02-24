@@ -1,7 +1,9 @@
 First project in Rust.
 
 ### Usage
-Create a file in `$HOME/.config/keep/keep_config.txt` for persistent notes.
+Run `keep --help` to see all available options! 
+
+Configure layout and color scheme via a TOML configuration file. See `keep --dump-config` for all available options and `keep --config` for details about each option!
 
 Run `cargo build --release` and move `./target/release/keep` to your `$PATH`
 
