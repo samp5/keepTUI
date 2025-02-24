@@ -455,7 +455,9 @@ impl Vim {
                     return Transition::Mode(Mode::Insert);
                 }
                 Input {
-                    key: Key::Enter, ..
+                    key: Key::Enter,
+                    ctrl: false,
+                    ..
                 } => {
                     textarea.move_cursor(CursorMove::End);
                     textarea.insert_newline();

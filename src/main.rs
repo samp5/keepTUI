@@ -2,7 +2,10 @@ use anyhow::Result as AResult;
 use app::{App, CurrentScreen};
 use config::Config;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -23,25 +26,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     App::parse_args()?;
 
     let config = Config::new()?;
+
     let mut app = App::new(config)?;
 
     enable_raw_mode()?;
-
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-
+    execute!(
+        stdout,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+        EnterAlternateScreen,
+        EnableMouseCapture
+    )?;
     let backend = CrosstermBackend::new(stdout);
-
     let mut terminal = Terminal::new(backend)?;
 
-    run_app(&mut terminal, &mut app)?;
-
+    main_loop(&mut terminal, &mut app)?;
     disable_raw_mode()?;
 
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        PopKeyboardEnhancementFlags
     )?;
 
     terminal.show_cursor()?;
@@ -49,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<()> {
+fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<()> {
     loop {
         let ui = UI::new(app);
         terminal.draw(|f| ui.run(f))?;
@@ -81,7 +87,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<()>
                         app.focus_right();
                     }
                     KeyCode::Char('k') => {
-                        app.focus_right();
+                        app.focus_left();
                     }
                     KeyCode::Char('l') => {
                         app.focus_right();
