@@ -14,13 +14,18 @@ impl NoteID {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ToDo {
+    pub indent: usize,
     pub complete: bool,
     pub data: String,
 }
 
 impl ToDo {
-    pub fn from(data: String, complete: bool) -> Self {
-        ToDo { complete, data }
+    pub fn from(data: String, complete: bool, indent: usize) -> Self {
+        ToDo {
+            complete,
+            data,
+            indent,
+        }
     }
 }
 

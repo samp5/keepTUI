@@ -95,6 +95,7 @@ pub struct Config {
 pub struct EditConfig {
     pub highlight: bool,
     pub conceal: bool,
+    pub tab_width: u8,
     pub complete_str: String,
     pub todo_str: String,
 }
@@ -104,6 +105,7 @@ impl Default for EditConfig {
         EditConfig {
             conceal: true,
             highlight: true,
+            tab_width: 4,
             complete_str: "[x]".to_string(),
             todo_str: "[ ]".to_string(),
         }

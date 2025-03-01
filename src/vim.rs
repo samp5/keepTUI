@@ -4,6 +4,7 @@ use ratatui::widgets::block::{Position, Title};
 use ratatui::widgets::{Block, Borders};
 use std::fmt;
 use tui_textarea::{CursorMove, Input, Key, Scrolling, TextArea};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::config::EditConfig;
 
@@ -79,6 +80,178 @@ pub struct Vim<'a> {
 }
 
 impl<'a> Vim<'a> {
+    pub fn checked_move(textarea: &mut TextArea<'_>, cursor_move: CursorMove) {
+        match cursor_move {
+            checked_move
+                if matches!(
+                    checked_move,
+                    CursorMove::Forward
+                        | CursorMove::WordForward
+                        | CursorMove::Back
+                        | CursorMove::WordBack
+                ) =>
+            {
+                let (row, col) = textarea.cursor();
+                textarea.move_cursor(checked_move);
+                let (row_after, _) = textarea.cursor();
+                if row != row_after {
+                    textarea.move_cursor(CursorMove::Jump(row as u16, col as u16));
+                }
+            }
+            other_move => textarea.move_cursor(other_move),
+        }
+    }
+    pub fn indent_level(&self, line: &str) -> usize {
+        let mut indent = 0;
+        let mut spaces = 0;
+        for s in line.graphemes(true) {
+            match s {
+                "\t" => {
+                    indent = indent + 1;
+                }
+                " " => {
+                    if spaces == self.editconf.tab_width - 1 {
+                        indent = indent + 1;
+                        spaces = 0;
+                    } else {
+                        spaces = spaces + 1;
+                    }
+                }
+                _ => break,
+            }
+        }
+        indent
+    }
+    /// Clone the current line and return `Some(line)` if the cursor is currently on a nonempty line, otherwise `None`
+    pub fn line(&self, textarea: &mut TextArea<'_>) -> Option<String> {
+        let (row, col) = textarea.cursor();
+        let yank_text = textarea.yank_text();
+
+        textarea.move_cursor(CursorMove::Head);
+        textarea.start_selection();
+        textarea.move_cursor(CursorMove::End);
+
+        if !textarea.cut() {
+            None
+        } else {
+            let line = textarea.yank_text();
+            textarea.insert_str(&line);
+            textarea.move_cursor(CursorMove::Jump(row as u16, col as u16));
+            textarea.set_yank_text(yank_text);
+
+            Some(line)
+        }
+    }
+
+    pub fn unindent(&self, textarea: &mut TextArea<'_>) {
+        let (row, col) = textarea.cursor();
+        let yank_text = textarea.yank_text();
+
+        // get the current line
+        let line = self.line(textarea);
+        if line.is_none() {
+            return;
+        }
+
+        let mut line = line.unwrap();
+
+        // find the relative position of the cursor to the checkbox
+        let rel_pos = col
+            - line
+                .find(&self.editconf.complete_str)
+                .or_else(|| line.find(&self.editconf.todo_str))
+                .unwrap_or(0);
+
+        // remove the "tab"
+        if let Some(index) = line.find("\t") {
+            line.replace_range(..(index + 1), "");
+        } else {
+            let mut removed_spaces = 0;
+            line = line
+                .graphemes(true)
+                .skip_while(|&c| {
+                    removed_spaces = removed_spaces + 1;
+                    c == " " && removed_spaces <= self.editconf.tab_width
+                })
+                .collect()
+        }
+
+        // remove old line
+        textarea.move_cursor(CursorMove::Head);
+        textarea.start_selection();
+        textarea.move_cursor(CursorMove::End);
+        textarea.cut();
+
+        // put our new line
+        textarea.insert_str(&line);
+
+        // grab the new line with space removed
+        let line = self.line(textarea).unwrap();
+
+        // find the new posiiton of the checkbox
+        let check_pos = line
+            .find(&self.editconf.complete_str)
+            .or_else(|| line.find(&self.editconf.todo_str))
+            .unwrap_or(0);
+
+        // update our cursor position
+        textarea.move_cursor(CursorMove::Jump(row as u16, (check_pos + rel_pos) as u16));
+
+        // replace the yank text
+        textarea.set_yank_text(yank_text);
+    }
+
+    pub fn indent(&self, textarea: &mut TextArea<'_>, with: &str) {
+        // hold previous state
+        let (row, col) = textarea.cursor();
+        let yank_text = textarea.yank_text();
+
+        // remove the line
+        textarea.move_cursor(CursorMove::Head);
+        textarea.start_selection();
+        textarea.move_cursor(CursorMove::End);
+        if !textarea.cut() {
+            // line is empty
+            ()
+        }
+        let mut line = textarea.yank_text();
+
+        // find the relative position of the cursor to the checkbox
+        let rel_pos = col
+            - line
+                .find(&self.editconf.complete_str)
+                .or_else(|| line.find(&self.editconf.todo_str))
+                .unwrap_or(0);
+
+        // insert our tab + line
+        textarea.move_cursor(CursorMove::Head);
+        textarea.insert_str(with);
+        textarea.insert_str(&line);
+
+        // grab the new line with a tab inserted
+        textarea.move_cursor(CursorMove::Head);
+        textarea.start_selection();
+        textarea.move_cursor(CursorMove::End);
+        textarea.cut();
+
+        line = textarea.yank_text();
+
+        // replace that new line
+        textarea.insert_str(&line);
+
+        // find the new posiiton of the checkbox
+        let check_pos = line
+            .find(&self.editconf.complete_str)
+            .or_else(|| line.find(&self.editconf.todo_str))
+            .unwrap_or(0);
+
+        // update our cursor position
+        textarea.move_cursor(CursorMove::Jump(row as u16, (check_pos + rel_pos) as u16));
+
+        // replace the yank text
+        textarea.set_yank_text(yank_text);
+    }
+
     pub fn new(mode: Mode, editconf: &'a EditConfig) -> Self {
         Self {
             mode,
@@ -91,6 +264,14 @@ impl<'a> Vim<'a> {
         Self {
             mode: self.mode,
             pending,
+            editconf: self.editconf,
+        }
+    }
+
+    pub fn without_pending(self) -> Self {
+        Self {
+            mode: self.mode,
+            pending: Input::default(),
             editconf: self.editconf,
         }
     }
@@ -112,12 +293,6 @@ impl<'a> Vim<'a> {
                         return Transition::Mode(Mode::Insert);
                     }
                     Input {
-                        key: Key::Tab,
-                        alt: true,
-                        ..
-                    } => {}
-                    Input { key: Key::Tab, .. } => {}
-                    Input {
                         key: Key::Enter, ..
                     } => {
                         let (row, col) = textarea.cursor();
@@ -129,12 +304,12 @@ impl<'a> Vim<'a> {
                         let mut line = textarea.yank_text();
                         if let Some(index) = line.find(&self.editconf.todo_str) {
                             line.replace_range(
-                                ..(index + self.editconf.todo_str.len()),
+                                index..(index + self.editconf.todo_str.len()),
                                 &self.editconf.complete_str,
                             )
                         } else if let Some(index) = line.find(&self.editconf.complete_str) {
                             line.replace_range(
-                                ..(index + self.editconf.complete_str.len()),
+                                index..(index + self.editconf.complete_str.len()),
                                 &self.editconf.todo_str,
                             )
                         }
@@ -146,7 +321,7 @@ impl<'a> Vim<'a> {
                     Input {
                         key: Key::Char('h'),
                         ..
-                    } => textarea.move_cursor(CursorMove::Back),
+                    } => Vim::checked_move(textarea, CursorMove::Back),
                     Input {
                         key: Key::Char('j'),
                         ..
@@ -158,16 +333,16 @@ impl<'a> Vim<'a> {
                     Input {
                         key: Key::Char('l'),
                         ..
-                    } => textarea.move_cursor(CursorMove::Forward),
+                    } => Vim::checked_move(textarea, CursorMove::Forward),
                     Input {
                         key: Key::Char('w'),
                         ..
-                    } => textarea.move_cursor(CursorMove::WordForward),
+                    } => Vim::checked_move(textarea, CursorMove::WordForward),
                     Input {
                         key: Key::Char('b'),
                         ctrl: false,
                         ..
-                    } => textarea.move_cursor(CursorMove::WordBack),
+                    } => Vim::checked_move(textarea, CursorMove::WordBack),
                     Input {
                         key: Key::Char('^'),
                         ..
@@ -236,8 +411,7 @@ impl<'a> Vim<'a> {
                         key: Key::Char('a'),
                         ..
                     } => {
-                        textarea.cancel_selection();
-                        textarea.move_cursor(CursorMove::Forward);
+                        Vim::checked_move(textarea, CursorMove::Forward);
                         return Transition::Mode(Mode::Insert);
                     }
                     Input {
@@ -252,18 +426,29 @@ impl<'a> Vim<'a> {
                         key: Key::Char('o'),
                         ..
                     } => {
+                        let prev_indent =
+                            self.indent_level(&self.line(textarea).unwrap_or("".to_string()));
                         textarea.move_cursor(CursorMove::End);
                         textarea.insert_newline();
                         textarea.insert_str(&self.editconf.todo_str);
+                        (0..prev_indent).into_iter().for_each(|_| {
+                            self.indent(textarea, &" ".repeat(self.editconf.tab_width as usize))
+                        });
                         return Transition::Mode(Mode::Insert);
                     }
                     Input {
                         key: Key::Char('O'),
                         ..
                     } => {
+                        let prev_indent =
+                            self.indent_level(&self.line(textarea).unwrap_or("".to_string()));
                         textarea.move_cursor(CursorMove::Head);
                         textarea.insert_newline();
                         textarea.move_cursor(CursorMove::Up);
+                        textarea.insert_str(&self.editconf.todo_str);
+                        (0..prev_indent).into_iter().for_each(|_| {
+                            self.indent(textarea, &" ".repeat(self.editconf.tab_width as usize))
+                        });
                         return Transition::Mode(Mode::Insert);
                     }
                     Input {
@@ -351,6 +536,36 @@ impl<'a> Vim<'a> {
                         textarea.move_cursor(CursorMove::Top)
                     }
                     Input {
+                        key: Key::Char('>'),
+                        ctrl: false,
+                        ..
+                    } if matches!(
+                        self.pending,
+                        Input {
+                            key: Key::Char('>'),
+                            ctrl: false,
+                            ..
+                        }
+                    ) =>
+                    {
+                        self.indent(textarea, &" ".repeat(textarea.tab_length() as usize));
+                    }
+                    Input {
+                        key: Key::Char('<'),
+                        ctrl: false,
+                        ..
+                    } if matches!(
+                        self.pending,
+                        Input {
+                            key: Key::Char('<'),
+                            ctrl: false,
+                            ..
+                        }
+                    ) =>
+                    {
+                        self.unindent(textarea);
+                    }
+                    Input {
                         key: Key::Char('G'),
                         ctrl: false,
                         ..
@@ -428,6 +643,19 @@ impl<'a> Vim<'a> {
                     ctrl: true,
                     ..
                 } => Transition::Mode(Mode::Normal),
+                Input {
+                    key: Key::Enter, ..
+                } => {
+                    let prev_indent =
+                        self.indent_level(&self.line(textarea).unwrap_or("".to_string()));
+                    textarea.move_cursor(CursorMove::End);
+                    textarea.insert_newline();
+                    textarea.insert_str(&self.editconf.todo_str);
+                    (0..prev_indent).into_iter().for_each(|_| {
+                        self.indent(textarea, &" ".repeat(self.editconf.tab_width as usize))
+                    });
+                    Transition::Mode(Mode::Insert)
+                }
                 input => {
                     textarea.input(input); // Use default key mappings in insert mode
                     Transition::Mode(Mode::Insert)

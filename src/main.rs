@@ -83,17 +83,17 @@ fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<(
                     KeyCode::Char('q') => {
                         app.current_screen = CurrentScreen::Exiting;
                     }
-                    KeyCode::Char('j') => {
+                    KeyCode::Char('j') | KeyCode::Char('l') => {
                         app.focus_right();
                     }
-                    KeyCode::Char('k') => {
+                    KeyCode::Char('k') | KeyCode::Char('h') => {
                         app.focus_left();
                     }
-                    KeyCode::Char('l') => {
-                        app.focus_right();
+                    KeyCode::Char('J') | KeyCode::Char('L') => {
+                        app.move_right();
                     }
-                    KeyCode::Char('h') => {
-                        app.focus_left();
+                    KeyCode::Char('K') | KeyCode::Char('H') => {
+                        app.move_left();
                     }
                     KeyCode::Char(':') => {
                         app.current_screen = CurrentScreen::Command;
@@ -128,7 +128,7 @@ fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<(
                     }
                     KeyCode::Char('e') | KeyCode::Enter => {
                         app.current_screen = CurrentScreen::NoteEdit;
-                        UIMut::new(app).edit(terminal)?;
+                        UIMut::new(app).edit_note(terminal)?;
                         app.current_screen = CurrentScreen::Main;
                     }
                     KeyCode::Char('a') => {
@@ -141,12 +141,20 @@ fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<(
                             app.delete(id);
                         }
                     }
+                    KeyCode::Char('?') => app.current_screen = CurrentScreen::Help,
                     _ => {}
                 },
                 app::CurrentScreen::NoteEdit => {}
                 app::CurrentScreen::NewNote => {}
                 app::CurrentScreen::Command => match key.code {
                     KeyCode::Esc => app.current_screen = CurrentScreen::Main,
+                    _ => {}
+                },
+                CurrentScreen::Help => match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        app.current_screen = CurrentScreen::Main;
+                        continue;
+                    }
                     _ => {}
                 },
             }

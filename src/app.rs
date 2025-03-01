@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::Context;
 use anyhow::Result as AResult;
+use indoc::indoc;
 
 use crate::{
     config::{Config, UserConfig},
@@ -16,15 +17,45 @@ use crate::{
 };
 use std::io::Result as IOResult;
 
+#[derive(PartialEq, Eq)]
 pub enum CurrentScreen {
     Main,
     NoteEdit,
     Exiting,
     NewNote,
     Command,
+    Help,
 }
 
 impl CurrentScreen {
+    pub fn content(&self) -> &str {
+        match &self {
+            CurrentScreen::Exiting => "Save changes? (y/n)",
+            CurrentScreen::Help => {
+                indoc! {"
+                Main View:
+                ? - show this help
+                a - add a note
+                D - delete currently focused note 
+                e or Enter - edit the focused note
+                l or j - focus left or down 
+                L or J - move note left or down 
+                h or k - focus right or up 
+                H or K - move note right or up
+
+                Edit View (Subset of Vim-keybinds with exceptions):
+                Normal:
+                o - add todo below
+                O - add todo above
+                n - insert todo on this line
+                q - return to Main View
+                Insert
+                Enter - toggle todo
+                "}
+            }
+            _ => "",
+        }
+    }
     pub fn navigation_text(&self) -> &str {
         match &self {
             CurrentScreen::Main => "Normal Mode",
@@ -32,18 +63,18 @@ impl CurrentScreen {
             CurrentScreen::Exiting => "Exiting",
             CurrentScreen::NewNote => "New Note",
             CurrentScreen::Command => "Command Mode",
+            CurrentScreen::Help => "Help",
         }
     }
 
     pub fn key_hints(&self) -> &str {
         match &self {
             CurrentScreen::Main => "[q]uit [e]dit [D]elete [a]dd note <h> left <l> right",
-            CurrentScreen::NoteEdit => {
-                "VIM keybinds (Tab) to indent checkbox (Alt-Tab) to unindent"
-            }
+            CurrentScreen::NoteEdit => "VIM keybinds",
             CurrentScreen::Exiting => "<Esc> to cancel",
             CurrentScreen::NewNote => "<ESC> cancel, <ENTER> accept ",
             CurrentScreen::Command => "<ESC> cancel, <ENTER> accept ",
+            CurrentScreen::Help => "<ESC> back",
         }
     }
 }
@@ -144,6 +175,28 @@ impl App {
         self.notes.add(new_note);
     }
 
+    pub fn move_right(&mut self) {
+        if self.focused().is_none() {
+            self.focus(self.displaying.first().copied());
+            return;
+        }
+
+        let curr = self
+            .displaying
+            .iter()
+            .position(|&e| Some(e) == self.focused());
+
+        let next = curr.map(|i| i + 1).and_then(|i| match i {
+            valid if i < self.displaying.len() && i > 0 => Some(valid),
+            invalid => Some(invalid % self.displaying.len()),
+        });
+
+        match (curr, next) {
+            (Some(c), Some(n)) => self.displaying.swap(c, n),
+            _ => (),
+        }
+    }
+
     pub fn focus_right(&mut self) {
         if self.focused().is_none() {
             self.focus(self.displaying.first().copied());
@@ -180,6 +233,28 @@ impl App {
         {
             Some(&id) => self.focus(Some(id)),
             None => self.focus(self.displaying.last().copied()),
+        }
+    }
+
+    pub fn move_left(&mut self) {
+        if self.focused().is_none() {
+            self.focus(self.displaying.first().copied());
+            return;
+        }
+
+        let curr = self
+            .displaying
+            .iter()
+            .position(|&e| Some(e) == self.focused());
+
+        let prev = curr.map(|i| i - 1).and_then(|i| match i {
+            valid if i < self.displaying.len() && i > 0 => Some(valid),
+            invalid => Some(invalid % self.displaying.len()),
+        });
+
+        match (curr, prev) {
+            (Some(c), Some(p)) => self.displaying.swap(c, p),
+            _ => (),
         }
     }
 

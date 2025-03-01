@@ -5,7 +5,7 @@ use crate::vim::{Mode, Transition, Vim};
 use anyhow::Result as AResult;
 use crossterm::event::{read, KeyCode, KeyEventState, KeyModifiers};
 use ratatui::backend::Backend;
-use ratatui::style::{Modifier, Styled};
+use ratatui::style::{Modifier, Styled, Stylize};
 use ratatui::Terminal;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -14,9 +14,11 @@ use ratatui::{
     widgets::{block::Title, Block, BorderType, Borders, Paragraph, Wrap},
     Frame,
 };
+use std::cmp::max;
 use std::io::{Error as IOError, ErrorKind as IOErrorKind, Result as IOResult};
 use std::rc::Rc;
 use tui_textarea::{CursorMove, Input, Key, TextArea};
+use unicode_segmentation::UnicodeSegmentation;
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
@@ -38,13 +40,6 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-pub struct UI<'a> {
-    app: &'a App,
-    pub colors: &'a ColorScheme,
-    pub layout: &'a LayoutConfig,
-    pub edit: &'a EditConfig,
-}
-
 pub struct UIMut<'a> {
     app: &'a mut App,
     pub colors: ColorScheme,
@@ -60,7 +55,7 @@ impl<'a> UIMut<'a> {
         }
     }
 
-    pub fn edit<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> AResult<()> {
+    pub fn edit_note<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> AResult<()> {
         let note = self.app.focused().and_then(|id| self.app.get_note(&id));
 
         if note.is_none() {
@@ -71,25 +66,28 @@ impl<'a> UIMut<'a> {
 
         let complete_string = self.edit.complete_str.clone();
         let todo_string = self.edit.todo_str.clone();
+        let indent_str = " ".repeat(self.edit.tab_width.into());
 
         let mut text_area = TextArea::new(
             note.items
                 .iter()
                 .map(|td| {
                     if td.complete {
-                        complete_string.clone() + &td.data
+                        indent_str.repeat(td.indent) + &complete_string + &td.data
                     } else {
-                        todo_string.clone() + &td.data
+                        indent_str.repeat(td.indent) + &todo_string + &td.data
                     }
                 })
                 .collect(),
         );
+        text_area.set_tab_length(self.edit.tab_width);
         text_area.set_style(Style::default().fg(self.colors.text));
         text_area.set_yank_text(self.app.clipboard.clone());
         text_area.set_block(
             Mode::Normal
                 .block(&note.title)
                 .border_style(self.colors.note_border)
+                .border_type(BorderType::Rounded)
                 .title_style(self.colors.text),
         );
         text_area.set_cursor_style(Mode::Normal.cursor_style());
@@ -102,7 +100,7 @@ impl<'a> UIMut<'a> {
         text_area.set_cursor_line_style(Style::default());
         text_area.move_cursor(CursorMove::Jump(
             0,
-            std::cmp::max(complete_string.chars().count(), todo_string.chars().count()) as u16,
+            max(complete_string.chars().count(), todo_string.chars().count()) as u16,
         ));
         text_area.set_yank_text(format!(
             "complete_string length is {} and todo_string length is {}",
@@ -131,7 +129,7 @@ impl<'a> UIMut<'a> {
                     text_area.set_cursor_style(mode.cursor_style());
                     Vim::new(mode, &self.edit)
                 }
-                Transition::Nop | Transition::Mode(_) => vim,
+                Transition::Nop | Transition::Mode(_) => vim.without_pending(),
                 Transition::Pending(input) => vim.with_pending(input),
                 Transition::Quit => {
                     break;
@@ -144,6 +142,7 @@ impl<'a> UIMut<'a> {
             _ => (),
         }
 
+        let tab_length = text_area.tab_length();
         self.app
             .focused()
             .and_then(|id| self.app.get_mut_note(&id))
@@ -153,10 +152,39 @@ impl<'a> UIMut<'a> {
                     .into_iter()
                     .filter(|s| !s.is_empty())
                     .map(|s| {
+                        let mut indent = 0;
+                        let mut spaces = 0;
+                        let s = s
+                            .graphemes(true)
+                            .skip_while(|&c| match c {
+                                "\t" => {
+                                    indent = indent + 1;
+                                    true
+                                }
+                                " " => {
+                                    if spaces == tab_length - 1 {
+                                        indent = indent + 1;
+                                        spaces = 0;
+                                    } else {
+                                        spaces = spaces + 1;
+                                    }
+                                    true
+                                }
+                                _ => false,
+                            })
+                            .collect::<String>();
                         if s.contains(&complete_string) {
-                            ToDo::from(s.trim_start_matches(&complete_string).to_string(), true)
+                            ToDo::from(
+                                s.trim_start_matches(&complete_string).to_string(),
+                                true,
+                                indent,
+                            )
                         } else {
-                            ToDo::from(s.trim_start_matches(&todo_string).to_string(), false)
+                            ToDo::from(
+                                s.trim_start_matches(&todo_string).to_string(),
+                                false,
+                                indent,
+                            )
                         }
                     })
                     .collect()
@@ -249,6 +277,13 @@ impl<'a> UIMut<'a> {
     }
 }
 
+pub struct UI<'a> {
+    app: &'a App,
+    pub colors: &'a ColorScheme,
+    pub layout: &'a LayoutConfig,
+    pub edit: &'a EditConfig,
+}
+
 impl<'a> UI<'a> {
     pub fn new(app: &'a App) -> UI<'a> {
         UI {
@@ -257,6 +292,30 @@ impl<'a> UI<'a> {
             layout: &app.config.user.layout,
             edit: &app.config.user.edit,
         }
+    }
+
+    pub fn help(&self, f: &mut Frame, chunk: &Rect) {
+        let popup_block = Block::default()
+            .title("Help")
+            .title_alignment(Alignment::Center)
+            .title_style(self.colors.text)
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .style(Style::default().fg(self.colors.note_border));
+
+        let exit_text = Text::styled(
+            CurrentScreen::Help.content(),
+            Style::default().fg(self.colors.text),
+        );
+
+        let area = centered_rect(80, 80, *chunk);
+
+        let help_paragraph = Paragraph::new(exit_text)
+            .block(popup_block)
+            .wrap(Wrap { trim: false })
+            .alignment(Alignment::Left);
+
+        f.render_widget(help_paragraph, area);
     }
 
     pub fn header(&self, f: &mut Frame, chunk: &Rect) {
@@ -312,13 +371,18 @@ impl<'a> UI<'a> {
                 let note_text =
                     Paragraph::new(note.items.iter().fold(String::new(), |mut a, td| {
                         if td.complete {
-                            a += &self.edit.complete_str;
+                            a = a
+                                + &" ".repeat(td.indent * self.edit.tab_width as usize)
+                                + &self.edit.complete_str
+                                + &td.data
+                                + "\n";
                         } else {
-                            a += &self.edit.todo_str;
+                            a = a
+                                + &" ".repeat(td.indent * self.edit.tab_width as usize)
+                                + &self.edit.todo_str
+                                + &td.data
+                                + "\n";
                         }
-
-                        a += &td.data;
-                        a += "\n";
                         a
                     }))
                     .block(note_block)
@@ -373,32 +437,38 @@ impl<'a> UI<'a> {
         f.render_widget(key_notes_footer, footer_chunk[1]);
     }
 
+    pub fn exit(&self, f: &mut Frame, chunk: &Rect) {
+        let popup_block = Block::default()
+            .title("Y/N")
+            .title_style(self.colors.text)
+            .borders(Borders::ALL)
+            .style(Style::default().fg(self.colors.note_border));
+
+        let exit_text = Text::styled(
+            CurrentScreen::Exiting.content(),
+            Style::default().fg(Color::Red.into()),
+        );
+
+        let area = centered_rect(30, 20, *chunk);
+
+        let exit_paragraph = Paragraph::new(exit_text)
+            .block(popup_block)
+            .wrap(Wrap { trim: false })
+            .centered();
+        f.render_widget(exit_paragraph, area);
+    }
+
     pub fn run(&self, f: &mut Frame) {
         let chunks = self.main_layout(f);
 
         self.header(f, &chunks[0]);
-        self.notes(f, &chunks[1]);
         self.footer(f, &chunks[2]);
 
-        if let CurrentScreen::Exiting = &self.app.current_screen {
-            let popup_block = Block::default()
-                .title("Y/N")
-                .title_style(self.colors.text)
-                .borders(Borders::ALL)
-                .style(Style::default().fg(self.colors.note_border));
-
-            let exit_text = Text::styled(
-                "Save changes? (y/n)",
-                Style::default().fg(Color::Red.into()),
-            );
-
-            let area = centered_rect(30, 20, chunks[1]);
-
-            let exit_paragraph = Paragraph::new(exit_text)
-                .block(popup_block)
-                .wrap(Wrap { trim: false })
-                .centered();
-            f.render_widget(exit_paragraph, area);
+        match self.app.current_screen {
+            CurrentScreen::Main => self.notes(f, &chunks[1]),
+            CurrentScreen::Exiting => self.exit(f, &chunks[1]),
+            CurrentScreen::Help => self.help(f, &chunks[1]),
+            _ => {}
         }
     }
 
