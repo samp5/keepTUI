@@ -1,5 +1,6 @@
 use crate::app::{App, CurrentScreen};
-use crate::config::{ColorScheme, LayoutConfig};
+use crate::config::{ColorScheme, EditConfig, LayoutConfig};
+use crate::note::ToDo;
 use crate::vim::{Mode, Transition, Vim};
 use anyhow::Result as AResult;
 use crossterm::event::{read, KeyCode, KeyEventState, KeyModifiers};
@@ -128,16 +129,35 @@ pub fn vim_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResul
         },
         None => return Ok(()),
     }
+    let ui = UI::new(app);
 
-    let mut text_area = TextArea::new(note.text_vec());
+    let complete_string = ui.edit.complete_str.clone();
+    let todo_string = ui.edit.todo_str.clone();
+
+    let mut text_area = TextArea::new(
+        note.items
+            .iter()
+            .map(|td| {
+                if td.complete {
+                    complete_string.clone() + &td.data
+                } else {
+                    todo_string.clone() + &td.data
+                }
+            })
+            .collect(),
+    );
 
     text_area.set_style(Style::default().fg(app.config.user.colors.text));
     text_area.set_yank_text(app.clipboard.clone());
-    text_area.set_block(Mode::Normal.block(&note.title));
+    text_area.set_block(
+        Mode::Normal
+            .block(&note.title)
+            .border_style(app.config.user.colors.note_border)
+            .title_style(app.config.user.colors.text),
+    );
     text_area.set_cursor_style(Mode::Normal.cursor_style());
 
-    let mut vim = Vim::new(Mode::Normal);
-    let ui = UI::new(app);
+    let mut vim = Vim::new(Mode::Normal, ui.edit);
 
     loop {
         terminal.draw(|f| {
@@ -149,9 +169,13 @@ pub fn vim_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResul
 
         vim = match vim.transition(crossterm::event::read()?.into(), &mut text_area) {
             Transition::Mode(mode) if vim.mode != mode => {
-                text_area.set_block(mode.block(&note.title));
+                text_area.set_block(
+                    mode.block(&note.title)
+                        .border_style(app.config.user.colors.note_border)
+                        .title_style(app.config.user.colors.text),
+                );
                 text_area.set_cursor_style(mode.cursor_style());
-                Vim::new(mode)
+                Vim::new(mode, ui.edit)
             }
             Transition::Nop | Transition::Mode(_) => vim,
             Transition::Pending(input) => vim.with_pending(input),
@@ -166,9 +190,20 @@ pub fn vim_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResul
         _ => (),
     }
 
-    app.focused()
-        .and_then(|id| app.get_mut_note(&id))
-        .map(|n| n.items = text_area.into_lines());
+    app.focused().and_then(|id| app.get_mut_note(&id)).map(|n| {
+        n.items = text_area
+            .into_lines()
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                if s.contains(&complete_string) {
+                    ToDo::from(s.trim_start_matches(&complete_string).to_string(), true)
+                } else {
+                    ToDo::from(s.trim_start_matches(&todo_string).to_string(), false)
+                }
+            })
+            .collect()
+    });
 
     Ok(())
 }
@@ -177,6 +212,7 @@ pub struct UI<'a> {
     data: &'a App,
     pub colors: &'a ColorScheme,
     pub layout: &'a LayoutConfig,
+    pub edit: &'a EditConfig,
 }
 
 impl<'a> UI<'a> {
@@ -185,6 +221,7 @@ impl<'a> UI<'a> {
             data: app,
             colors: &app.config.user.colors,
             layout: &app.config.user.layout,
+            edit: &app.config.user.edit,
         }
     }
 
@@ -229,6 +266,7 @@ impl<'a> UI<'a> {
             if let Some(note) = self.data.get_note(id) {
                 let mut note_block = Block::default()
                     .title(Title::from(note.title.clone()).alignment(Alignment::Center))
+                    .title_style(Style::default().fg(self.colors.text))
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(self.colors.note_border));
@@ -237,7 +275,18 @@ impl<'a> UI<'a> {
                     note_block =
                         note_block.border_style(Style::default().fg(self.colors.active_border));
                 }
-                let note_text = Paragraph::new(note.text())
+                let note_text =
+                    Paragraph::new(note.items.iter().fold(String::new(), |mut a, td| {
+                        if td.complete {
+                            a += &self.edit.complete_str;
+                        } else {
+                            a += &self.edit.todo_str;
+                        }
+
+                        a += &td.data;
+                        a += "\n";
+                        a
+                    }))
                     .block(note_block)
                     .style(Style::default().fg(self.colors.text));
 
@@ -262,16 +311,24 @@ impl<'a> UI<'a> {
             Style::default().fg(self.colors.mode_hint),
         )];
 
-        let mode_footer = Paragraph::new(Line::from(current_navigation_text))
-            .block(Block::default().borders(Borders::ALL));
+        let mode_footer = Paragraph::new(Line::from(current_navigation_text)).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(self.colors.footer_border))
+                .border_type(BorderType::Rounded),
+        );
 
         let current_key_hint = Span::styled(
             self.data.current_screen.key_hints(),
             Style::default().fg(self.colors.key_hints),
         );
 
-        let key_notes_footer = Paragraph::new(Line::from(current_key_hint))
-            .block(Block::default().borders(Borders::ALL));
+        let key_notes_footer = Paragraph::new(Line::from(current_key_hint)).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(self.colors.footer_border))
+                .border_type(BorderType::Rounded),
+        );
 
         let footer_chunk = Layout::default()
             .direction(Direction::Horizontal)
@@ -292,20 +349,21 @@ impl<'a> UI<'a> {
         if let CurrentScreen::Exiting = &self.data.current_screen {
             let popup_block = Block::default()
                 .title("Y/N")
+                .title_style(self.colors.text)
                 .borders(Borders::ALL)
-                .style(Style::default());
+                .style(Style::default().fg(self.colors.note_border));
 
             let exit_text = Text::styled(
-                "Would you like to save changes made to keepTUIt? (y/n)",
+                "Save changes? (y/n)",
                 Style::default().fg(Color::Red.into()),
             );
+
+            let area = centered_rect(30, 20, chunks[1]);
 
             let exit_paragraph = Paragraph::new(exit_text)
                 .block(popup_block)
                 .wrap(Wrap { trim: false })
                 .centered();
-
-            let area = centered_rect(30, 50, chunks[1]);
             f.render_widget(exit_paragraph, area);
         }
     }

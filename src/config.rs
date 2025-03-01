@@ -2,6 +2,7 @@ use anyhow::{Context, Result as AResult};
 use ratatui::layout::{Constraint, Direction};
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
+use std::ascii::AsciiExt;
 use std::env::{var, vars};
 use std::fs::OpenOptions;
 use std::io::{Error as IOError, ErrorKind as IOErrorKind, Read};
@@ -17,6 +18,7 @@ pub struct ColorScheme {
     pub mode_hint: Color,
     pub title: Color,
     pub note_border: Color,
+    pub footer_border: Color,
 }
 
 impl Default for ColorScheme {
@@ -29,6 +31,7 @@ impl Default for ColorScheme {
             active_border: Color::Green,
             key_hints: Color::Red,
             mode_hint: Color::Green,
+            footer_border: Color::White,
         }
     }
 }
@@ -90,10 +93,30 @@ pub struct Config {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct EditConfig {
+    pub highlight: bool,
+    pub conceal: bool,
+    pub complete_str: String,
+    pub todo_str: String,
+}
+
+impl Default for EditConfig {
+    fn default() -> Self {
+        EditConfig {
+            conceal: true,
+            highlight: true,
+            complete_str: "[x]".to_string(),
+            todo_str: "[ ]".to_string(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct UserConfig {
     pub colors: ColorScheme,
     pub data_path: PathBuf,
     pub layout: LayoutConfig,
+    pub edit: EditConfig,
 }
 
 impl Default for UserConfig {
@@ -102,6 +125,7 @@ impl Default for UserConfig {
             colors: ColorScheme::default(),
             data_path: Config::data_path().unwrap(),
             layout: LayoutConfig::default(),
+            edit: EditConfig::default(),
         }
     }
 }
@@ -110,10 +134,11 @@ impl Config {
     pub fn new() -> AResult<Config> {
         let user_config = Config::read_user_config().unwrap_or_default();
         Ok(Config {
-            data_path: Config::data_path()?,
+            data_path: user_config.data_path.clone(),
             user: user_config,
         })
     }
+
     fn data_path() -> AResult<PathBuf> {
         if let Some(root) = var("XDG_DATA_HOME").ok().filter(|s| s.len() > 0) {
             Ok(PathBuf::from(root + "/.keepTUI/notes"))

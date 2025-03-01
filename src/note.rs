@@ -12,11 +12,23 @@ impl NoteID {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ToDo {
+    pub complete: bool,
+    pub data: String,
+}
+
+impl ToDo {
+    pub fn from(data: String, complete: bool) -> Self {
+        ToDo { complete, data }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Note {
     pub title: String,
     pub id: NoteID,
-    pub items: Vec<String>,
+    pub items: Vec<ToDo>,
     pub focused: bool,
     pub displayed: bool,
 }
@@ -63,19 +75,6 @@ impl NoteFactory {
 }
 
 impl Note {
-    pub fn text(&self) -> String {
-        let mut ret = String::new();
-        for item in &self.items {
-            ret += &item;
-            ret += "\n";
-        }
-        ret
-    }
-
-    pub fn text_vec(&self) -> Vec<String> {
-        self.items.clone()
-    }
-
     pub fn is_focused(&self) -> bool {
         self.focused
     }

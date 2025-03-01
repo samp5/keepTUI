@@ -5,6 +5,8 @@ use ratatui::widgets::{Block, Borders};
 use std::fmt;
 use tui_textarea::{CursorMove, Input, Key, Scrolling, TextArea};
 
+use crate::config::EditConfig;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
@@ -67,16 +69,18 @@ pub enum Transition {
 }
 
 // State of Vim emulation
-pub struct Vim {
+pub struct Vim<'a> {
     pub mode: Mode,
     pub pending: Input, // Pending input to handle a sequence with two keys like gg
+    pub editconf: &'a EditConfig,
 }
 
-impl Vim {
-    pub fn new(mode: Mode) -> Self {
+impl<'a> Vim<'a> {
+    pub fn new(mode: Mode, editconf: &'a EditConfig) -> Self {
         Self {
             mode,
             pending: Input::default(),
+            editconf,
         }
     }
 
@@ -84,6 +88,7 @@ impl Vim {
         Self {
             mode: self.mode,
             pending,
+            editconf: self.editconf,
         }
     }
 
@@ -100,28 +105,15 @@ impl Vim {
                         ..
                     } => {
                         textarea.move_cursor(CursorMove::Head);
-                        textarea.set_yank_text("[ ] ");
-                        textarea.paste();
+                        textarea.insert_str(&self.editconf.todo_str);
                         return Transition::Mode(Mode::Insert);
                     }
                     Input {
                         key: Key::Tab,
                         alt: true,
                         ..
-                    } => {
-                        textarea.move_cursor(CursorMove::Head);
-                        textarea.delete_next_word();
-                        textarea.set_yank_text("[");
-                        textarea.paste();
-                        textarea.move_cursor(CursorMove::WordForward);
-                        textarea.move_cursor(CursorMove::WordForward);
-                    }
-                    Input { key: Key::Tab, .. } => {
-                        textarea.move_cursor(CursorMove::Head);
-                        textarea.insert_tab();
-                        textarea.move_cursor(CursorMove::WordForward);
-                        textarea.move_cursor(CursorMove::WordForward);
-                    }
+                    } => {}
+                    Input { key: Key::Tab, .. } => {}
                     Input {
                         key: Key::Enter, ..
                     } => {
@@ -132,10 +124,16 @@ impl Vim {
                         textarea.move_cursor(CursorMove::End);
                         textarea.cut();
                         let mut line = textarea.yank_text();
-                        if let Some(index) = line.find("[ ]") {
-                            line.replace_range(..(index + "[ ]".len()), "[x]")
-                        } else if let Some(index) = line.find("[x]") {
-                            line.replace_range(..(index + "[x]".len()), "[ ]")
+                        if let Some(index) = line.find(&self.editconf.todo_str) {
+                            line.replace_range(
+                                ..(index + self.editconf.todo_str.len()),
+                                &self.editconf.complete_str,
+                            )
+                        } else if let Some(index) = line.find(&self.editconf.complete_str) {
+                            line.replace_range(
+                                ..(index + self.editconf.complete_str.len()),
+                                &self.editconf.todo_str,
+                            )
                         }
                         textarea.insert_str(line);
 
@@ -253,7 +251,7 @@ impl Vim {
                     } => {
                         textarea.move_cursor(CursorMove::End);
                         textarea.insert_newline();
-                        textarea.insert_str("[ ] ");
+                        textarea.insert_str(&self.editconf.todo_str);
                         return Transition::Mode(Mode::Insert);
                     }
                     Input {
@@ -427,44 +425,6 @@ impl Vim {
                     ctrl: true,
                     ..
                 } => Transition::Mode(Mode::Normal),
-                Input {
-                    key: Key::Enter,
-                    ctrl: true,
-                    ..
-                } => {
-                    let (row, col) = textarea.cursor();
-                    let yank_text = textarea.yank_text();
-
-                    textarea.move_cursor(CursorMove::Head);
-                    textarea.start_selection();
-                    textarea.move_cursor(CursorMove::End);
-                    textarea.cut();
-                    let mut line = textarea.yank_text();
-
-                    if let Some(index) = line.find("[ ]") {
-                        line.replace_range(..(index + "[ ]".len()), "[x]")
-                    } else if let Some(index) = line.find("[x]") {
-                        line.replace_range(..(index + "[x]".len()), "[ ]")
-                    }
-
-                    textarea.insert_str(line);
-
-                    textarea.set_yank_text(yank_text);
-                    textarea.move_cursor(CursorMove::Jump(row as u16, col as u16));
-
-                    return Transition::Mode(Mode::Insert);
-                }
-                Input {
-                    key: Key::Enter,
-                    ctrl: false,
-                    ..
-                } => {
-                    textarea.move_cursor(CursorMove::End);
-                    textarea.insert_newline();
-                    textarea.insert_str("[ ] ");
-
-                    return Transition::Mode(Mode::Insert);
-                }
                 input => {
                     textarea.input(input); // Use default key mappings in insert mode
                     Transition::Mode(Mode::Insert)
