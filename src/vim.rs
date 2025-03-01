@@ -157,10 +157,12 @@ impl<'a> Vim<'a> {
 
         // find the relative position of the cursor to the checkbox
         let rel_pos = col
-            - line
-                .find(&self.editconf.complete_str)
-                .or_else(|| line.find(&self.editconf.todo_str))
-                .unwrap_or(0);
+            .checked_sub(
+                line.find(&self.editconf.complete_str)
+                    .or_else(|| line.find(&self.editconf.todo_str))
+                    .unwrap_or(0),
+            )
+            .unwrap_or(0);
 
         // remove the "tab"
         if let Some(index) = line.find("\t") {
@@ -218,10 +220,12 @@ impl<'a> Vim<'a> {
 
         // find the relative position of the cursor to the checkbox
         let rel_pos = col
-            - line
-                .find(&self.editconf.complete_str)
-                .or_else(|| line.find(&self.editconf.todo_str))
-                .unwrap_or(0);
+            .checked_sub(
+                line.find(&self.editconf.complete_str)
+                    .or_else(|| line.find(&self.editconf.todo_str))
+                    .unwrap_or(0),
+            )
+            .unwrap_or(0);
 
         // insert our tab + line
         textarea.move_cursor(CursorMove::Head);
