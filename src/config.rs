@@ -1,9 +1,8 @@
-use anyhow::{Context, Result as AResult};
+use anyhow::Result as AResult;
 use ratatui::layout::{Constraint, Direction};
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
-use std::ascii::AsciiExt;
-use std::env::{var, vars};
+use std::env::var;
 use std::fs::OpenOptions;
 use std::io::{Error as IOError, ErrorKind as IOErrorKind, Read};
 use std::path::PathBuf;
@@ -36,7 +35,7 @@ impl Default for ColorScheme {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum NoteDirection {
     Horizontal,
     Vertical,
@@ -51,7 +50,7 @@ impl From<&NoteDirection> for Direction {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LayoutConfig {
     pub header: bool,
     pub footer: bool,
@@ -70,7 +69,7 @@ impl Default for LayoutConfig {
 
 impl LayoutConfig {
     pub fn contraints(&self) -> impl IntoIterator<Item = Constraint> {
-        let mut contraints = vec![
+        let contraints = vec![
             match self.header {
                 true => Constraint::Min(3),
                 false => Constraint::Percentage(0),
@@ -92,7 +91,7 @@ pub struct Config {
     pub user: UserConfig,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EditConfig {
     pub highlight: bool,
     pub conceal: bool,

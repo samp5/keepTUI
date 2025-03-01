@@ -45,7 +45,10 @@ impl Mode {
             Self::Visual => Color::LightYellow,
             Self::Operator(_) => Color::LightGreen,
         };
-        Style::default().fg(color).add_modifier(Modifier::REVERSED)
+        Style::default()
+            .fg(color)
+            .add_modifier(Modifier::REVERSED)
+            .add_modifier(Modifier::DIM)
     }
 }
 

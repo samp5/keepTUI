@@ -5,7 +5,7 @@ use crate::vim::{Mode, Transition, Vim};
 use anyhow::Result as AResult;
 use crossterm::event::{read, KeyCode, KeyEventState, KeyModifiers};
 use ratatui::backend::Backend;
-use ratatui::style::Styled;
+use ratatui::style::{Modifier, Styled};
 use ratatui::Terminal;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -16,7 +16,7 @@ use ratatui::{
 };
 use std::io::{Error as IOError, ErrorKind as IOErrorKind, Result as IOResult};
 use std::rc::Rc;
-use tui_textarea::{Input, Key, TextArea};
+use tui_textarea::{CursorMove, Input, Key, TextArea};
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
@@ -38,187 +38,221 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-pub fn command_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> IOResult<String> {
-    let mut textarea = TextArea::default();
-    textarea.set_placeholder_text("cmd");
-    textarea.set_block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(Span::from("Command Mode").style(Style::default().fg(Color::Yellow))),
-    );
-
-    textarea.input(crossterm::event::KeyEvent {
-        code: KeyCode::Char(':'),
-        modifiers: KeyModifiers::NONE,
-        kind: crossterm::event::KeyEventKind::Press,
-        state: KeyEventState::NONE,
-    });
-
-    loop {
-        terminal.draw(|f| {
-            let widget = textarea.widget();
-            let ui = UI::new(app);
-            let chunks = ui.main_layout(f);
-            ui.header(f, &chunks[0]);
-            ui.notes(f, &chunks[1]);
-            f.render_widget(widget, chunks[2]);
-        })?;
-        match crossterm::event::read()?.into() {
-            Input { key: Key::Esc, .. } => return Err(IOError::new(IOErrorKind::Other, "escape")),
-            Input {
-                key: Key::Enter, ..
-            } => {
-                let source = textarea.lines().to_vec().concat().trim().to_string();
-                return Ok(source);
-            }
-            input => {
-                // TextArea::input returns if the input modified its text
-                textarea.input(input);
-            }
-        }
-    }
-}
-
-pub fn new_note<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> IOResult<()> {
-    let mut textarea = TextArea::default();
-
-    textarea.set_placeholder_text("Enter note title");
-    textarea.set_block(Block::default().title("New note:").borders(Borders::ALL));
-
-    let ui = UI::new(app);
-
-    loop {
-        terminal.draw(|f| {
-            let widget = textarea.widget();
-            let chunks = ui.main_layout(f);
-            ui.header(f, &chunks[0]);
-            f.render_widget(widget, centered_rect(20, 10, f.size()));
-            ui.footer(f, &chunks[2]);
-        })?;
-        match crossterm::event::read()?.into() {
-            Input { key: Key::Esc, .. } => break,
-            Input {
-                key: Key::Enter, ..
-            } => {
-                app.add_note(
-                    textarea
-                        .lines()
-                        .to_vec()
-                        .into_iter()
-                        .skip_while(|s| s.is_empty())
-                        .collect::<Vec<_>>()
-                        .concat(),
-                );
-                break;
-            }
-            input => {
-                // TextArea::input returns if the input modified its text
-                textarea.input(input);
-            }
-        }
-    }
-    Ok(())
-}
-
-pub fn vim_mode<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<()> {
-    let note;
-    match app.focused() {
-        Some(id) => match app.get_note(&id) {
-            Some(n) => note = n,
-            None => return Ok(()),
-        },
-        None => return Ok(()),
-    }
-    let ui = UI::new(app);
-
-    let complete_string = ui.edit.complete_str.clone();
-    let todo_string = ui.edit.todo_str.clone();
-
-    let mut text_area = TextArea::new(
-        note.items
-            .iter()
-            .map(|td| {
-                if td.complete {
-                    complete_string.clone() + &td.data
-                } else {
-                    todo_string.clone() + &td.data
-                }
-            })
-            .collect(),
-    );
-
-    text_area.set_style(Style::default().fg(app.config.user.colors.text));
-    text_area.set_yank_text(app.clipboard.clone());
-    text_area.set_block(
-        Mode::Normal
-            .block(&note.title)
-            .border_style(app.config.user.colors.note_border)
-            .title_style(app.config.user.colors.text),
-    );
-    text_area.set_cursor_style(Mode::Normal.cursor_style());
-
-    let mut vim = Vim::new(Mode::Normal, ui.edit);
-
-    loop {
-        terminal.draw(|f| {
-            let chunks = ui.main_layout(f);
-            ui.header(f, &chunks[0]);
-            ui.footer(f, &chunks[2]);
-            f.render_widget(text_area.widget(), centered_rect(70, 70, f.size()))
-        })?;
-
-        vim = match vim.transition(crossterm::event::read()?.into(), &mut text_area) {
-            Transition::Mode(mode) if vim.mode != mode => {
-                text_area.set_block(
-                    mode.block(&note.title)
-                        .border_style(app.config.user.colors.note_border)
-                        .title_style(app.config.user.colors.text),
-                );
-                text_area.set_cursor_style(mode.cursor_style());
-                Vim::new(mode, ui.edit)
-            }
-            Transition::Nop | Transition::Mode(_) => vim,
-            Transition::Pending(input) => vim.with_pending(input),
-            Transition::Quit => {
-                break;
-            }
-        }
-    }
-
-    match text_area.yank_text() {
-        s if s.len() > 0 => app.clipboard = s,
-        _ => (),
-    }
-
-    app.focused().and_then(|id| app.get_mut_note(&id)).map(|n| {
-        n.items = text_area
-            .into_lines()
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .map(|s| {
-                if s.contains(&complete_string) {
-                    ToDo::from(s.trim_start_matches(&complete_string).to_string(), true)
-                } else {
-                    ToDo::from(s.trim_start_matches(&todo_string).to_string(), false)
-                }
-            })
-            .collect()
-    });
-
-    Ok(())
-}
-
 pub struct UI<'a> {
-    data: &'a App,
+    app: &'a App,
     pub colors: &'a ColorScheme,
     pub layout: &'a LayoutConfig,
     pub edit: &'a EditConfig,
 }
 
+pub struct UIMut<'a> {
+    app: &'a mut App,
+    pub colors: ColorScheme,
+    pub edit: EditConfig,
+}
+
+impl<'a> UIMut<'a> {
+    pub fn new(app: &'a mut App) -> UIMut<'a> {
+        UIMut {
+            colors: app.config.user.colors.clone(),
+            edit: app.config.user.edit.clone(),
+            app,
+        }
+    }
+
+    pub fn edit<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> AResult<()> {
+        let note = self.app.focused().and_then(|id| self.app.get_note(&id));
+
+        if note.is_none() {
+            return Ok(());
+        }
+
+        let note = note.unwrap();
+
+        let complete_string = self.edit.complete_str.clone();
+        let todo_string = self.edit.todo_str.clone();
+
+        let mut text_area = TextArea::new(
+            note.items
+                .iter()
+                .map(|td| {
+                    if td.complete {
+                        complete_string.clone() + &td.data
+                    } else {
+                        todo_string.clone() + &td.data
+                    }
+                })
+                .collect(),
+        );
+        text_area.set_style(Style::default().fg(self.colors.text));
+        text_area.set_yank_text(self.app.clipboard.clone());
+        text_area.set_block(
+            Mode::Normal
+                .block(&note.title)
+                .border_style(self.colors.note_border)
+                .title_style(self.colors.text),
+        );
+        text_area.set_cursor_style(Mode::Normal.cursor_style());
+        text_area.set_selection_style(
+            Style::default()
+                .fg(self.colors.text)
+                .add_modifier(Modifier::REVERSED)
+                .add_modifier(Modifier::DIM),
+        );
+        text_area.set_cursor_line_style(Style::default());
+        text_area.move_cursor(CursorMove::Jump(
+            0,
+            std::cmp::max(complete_string.chars().count(), todo_string.chars().count()) as u16,
+        ));
+        text_area.set_yank_text(format!(
+            "complete_string length is {} and todo_string length is {}",
+            complete_string.len(),
+            todo_string.len()
+        ));
+
+        let mut vim = Vim::new(Mode::Normal, &self.edit);
+
+        let ui = UI::new(self.app);
+        loop {
+            terminal.draw(|f| {
+                let chunks = ui.main_layout(f);
+                ui.header(f, &chunks[0]);
+                ui.footer(f, &chunks[2]);
+                f.render_widget(text_area.widget(), centered_rect(70, 70, f.size()))
+            })?;
+
+            vim = match vim.transition(crossterm::event::read()?.into(), &mut text_area) {
+                Transition::Mode(mode) if vim.mode != mode => {
+                    text_area.set_block(
+                        mode.block(&note.title)
+                            .border_style(self.colors.note_border)
+                            .title_style(self.colors.text),
+                    );
+                    text_area.set_cursor_style(mode.cursor_style());
+                    Vim::new(mode, &self.edit)
+                }
+                Transition::Nop | Transition::Mode(_) => vim,
+                Transition::Pending(input) => vim.with_pending(input),
+                Transition::Quit => {
+                    break;
+                }
+            }
+        }
+
+        match text_area.yank_text() {
+            s if s.len() > 0 => self.app.clipboard = s,
+            _ => (),
+        }
+
+        self.app
+            .focused()
+            .and_then(|id| self.app.get_mut_note(&id))
+            .map(|n| {
+                n.items = text_area
+                    .into_lines()
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| {
+                        if s.contains(&complete_string) {
+                            ToDo::from(s.trim_start_matches(&complete_string).to_string(), true)
+                        } else {
+                            ToDo::from(s.trim_start_matches(&todo_string).to_string(), false)
+                        }
+                    })
+                    .collect()
+            });
+
+        Ok(())
+    }
+
+    pub fn new_note<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> IOResult<()> {
+        let mut textarea = TextArea::default();
+
+        textarea.set_placeholder_text("Enter note title");
+        textarea.set_block(Block::default().title("New note:").borders(Borders::ALL));
+
+        let ui = UI::new(self.app);
+
+        loop {
+            terminal.draw(|f| {
+                let widget = textarea.widget();
+                let chunks = ui.main_layout(f);
+                ui.header(f, &chunks[0]);
+                f.render_widget(widget, centered_rect(20, 10, f.size()));
+                ui.footer(f, &chunks[2]);
+            })?;
+            match crossterm::event::read()?.into() {
+                Input { key: Key::Esc, .. } => break,
+                Input {
+                    key: Key::Enter, ..
+                } => {
+                    self.app.add_note(
+                        textarea
+                            .lines()
+                            .to_vec()
+                            .into_iter()
+                            .skip_while(|s| s.is_empty())
+                            .collect::<Vec<_>>()
+                            .concat(),
+                    );
+                    break;
+                }
+                input => {
+                    // TextArea::input returns if the input modified its text
+                    textarea.input(input);
+                }
+            }
+        }
+        Ok(())
+    }
+    pub fn command<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> IOResult<String> {
+        let mut textarea = TextArea::default();
+        textarea.set_placeholder_text("cmd");
+        textarea.set_block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::from("Command Mode").style(Style::default().fg(Color::Yellow))),
+        );
+
+        textarea.input(crossterm::event::KeyEvent {
+            code: KeyCode::Char(':'),
+            modifiers: KeyModifiers::NONE,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        });
+
+        loop {
+            terminal.draw(|f| {
+                let widget = textarea.widget();
+                let ui = UI::new(self.app);
+                let chunks = ui.main_layout(f);
+                ui.header(f, &chunks[0]);
+                ui.notes(f, &chunks[1]);
+                f.render_widget(widget, chunks[2]);
+            })?;
+            match crossterm::event::read()?.into() {
+                Input { key: Key::Esc, .. } => {
+                    return Err(IOError::new(IOErrorKind::Other, "escape"))
+                }
+                Input {
+                    key: Key::Enter, ..
+                } => {
+                    let source = textarea.lines().to_vec().concat().trim().to_string();
+                    return Ok(source);
+                }
+                input => {
+                    // TextArea::input returns if the input modified its text
+                    textarea.input(input);
+                }
+            }
+        }
+    }
+}
+
 impl<'a> UI<'a> {
     pub fn new(app: &'a App) -> UI<'a> {
         UI {
-            data: app,
+            app,
             colors: &app.config.user.colors,
             layout: &app.config.user.layout,
             edit: &app.config.user.edit,
@@ -245,13 +279,13 @@ impl<'a> UI<'a> {
 
     pub fn notes(&self, f: &mut Frame, chunk: &Rect) {
         if !matches!(
-            self.data.current_screen,
+            self.app.current_screen,
             CurrentScreen::Main | CurrentScreen::Command
         ) {
             return;
         }
 
-        let number_notes: usize = self.data.displaying.len();
+        let number_notes: usize = self.app.displaying.len();
 
         // let constraint_percent: u16 = 100 / (number_notes as u16);
         let note_chunks = Layout::default()
@@ -262,8 +296,8 @@ impl<'a> UI<'a> {
             ])
             .split(*chunk);
 
-        for (index, id) in self.data.displaying.iter().enumerate() {
-            if let Some(note) = self.data.get_note(id) {
+        for (index, id) in self.app.displaying.iter().enumerate() {
+            if let Some(note) = self.app.get_note(id) {
                 let mut note_block = Block::default()
                     .title(Title::from(note.title.clone()).alignment(Alignment::Center))
                     .title_style(Style::default().fg(self.colors.text))
@@ -307,7 +341,7 @@ impl<'a> UI<'a> {
             return;
         }
         let current_navigation_text = vec![Span::styled(
-            self.data.current_screen.navigation_text(),
+            self.app.current_screen.navigation_text(),
             Style::default().fg(self.colors.mode_hint),
         )];
 
@@ -319,7 +353,7 @@ impl<'a> UI<'a> {
         );
 
         let current_key_hint = Span::styled(
-            self.data.current_screen.key_hints(),
+            self.app.current_screen.key_hints(),
             Style::default().fg(self.colors.key_hints),
         );
 
@@ -346,7 +380,7 @@ impl<'a> UI<'a> {
         self.notes(f, &chunks[1]);
         self.footer(f, &chunks[2]);
 
-        if let CurrentScreen::Exiting = &self.data.current_screen {
+        if let CurrentScreen::Exiting = &self.app.current_screen {
             let popup_block = Block::default()
                 .title("Y/N")
                 .title_style(self.colors.text)

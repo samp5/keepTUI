@@ -14,7 +14,7 @@ use ratatui::{
     Terminal,
 };
 use std::{self, io};
-use ui::{command_mode, new_note, vim_mode, UI};
+use ui::{UIMut, UI};
 
 mod app;
 mod config;
@@ -97,7 +97,7 @@ fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<(
                     }
                     KeyCode::Char(':') => {
                         app.current_screen = CurrentScreen::Command;
-                        let res = command_mode(terminal, app);
+                        let res = UIMut::new(app).command(terminal);
                         if let Ok(s) = res {
                             match s.as_str() {
                                 ":wq" => {
@@ -128,12 +128,12 @@ fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<(
                     }
                     KeyCode::Char('e') | KeyCode::Enter => {
                         app.current_screen = CurrentScreen::NoteEdit;
-                        vim_mode(terminal, app)?;
+                        UIMut::new(app).edit(terminal)?;
                         app.current_screen = CurrentScreen::Main;
                     }
                     KeyCode::Char('a') => {
                         app.current_screen = CurrentScreen::NewNote;
-                        new_note(terminal, app)?;
+                        UIMut::new(app).new_note(terminal)?;
                         app.current_screen = CurrentScreen::Main;
                     }
                     KeyCode::Char('D') => {
