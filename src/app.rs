@@ -14,6 +14,7 @@ use indoc::indoc;
 use crate::{
     config::{Config, UserConfig},
     note::{Note, NoteCollection, NoteFactory, NoteID},
+    tag::{TagCollection, TagID},
 };
 use std::io::Result as IOResult;
 
@@ -83,6 +84,7 @@ pub struct App {
     pub current_screen: CurrentScreen,
     pub notes: NoteCollection,
     pub displaying: Vec<NoteID>,
+    pub tags: TagCollection,
     pub note_focus: Option<NoteID>,
     pub clipboard: String,
     pub modified: bool,
@@ -92,7 +94,7 @@ pub struct App {
 
 impl App {
     pub fn new(config: Config) -> AResult<App> {
-        let notes = App::read_from_file(&config)?;
+        let (notes, tags) = App::read_from_file(&config)?;
 
         let displaying = notes
             .notes
@@ -100,12 +102,14 @@ impl App {
             .filter(|(_, n)| n.displayed())
             .map(|(id, _)| id.clone())
             .collect::<Vec<_>>();
+
         let max_id = notes.max_id();
 
         Ok(App {
             current_screen: CurrentScreen::Main,
             config,
             notes,
+            tags,
             displaying,
             note_focus: None,
             clipboard: String::new(),
@@ -114,31 +118,27 @@ impl App {
         })
     }
 
-    pub fn read_from_file(config: &Config) -> AResult<NoteCollection> {
-        if !config
-            .data_path
-            .parent()
-            .context(format!(
-                "{:#?} does not have a parent directory",
-                config.data_path
-            ))?
-            .exists()
-        {
-            create_dir(config.data_path.parent().context(format!(
-                "{:#?} does not have a parent directory",
-                config.data_path
-            ))?)
-            .context(format!("failed to create path {:#?}", config.data_path))?
+    pub fn read_from_file(config: &Config) -> AResult<(NoteCollection, TagCollection)> {
+        if !config.data_path.exists() && config.data_path.metadata().is_ok_and(|d| d.is_dir()) {
+            create_dir(config.data_path.clone())
+                .context(format!("failed to create path {:#?}", config.data_path))?
         }
 
-        let file = OpenOptions::new()
+        Ok((
+            App::read_note_collection(config)?,
+            App::read_tag_collection(config)?,
+        ))
+    }
+
+    pub fn read_note_collection(config: &Config) -> AResult<NoteCollection> {
+        let note_file = OpenOptions::new()
             .create(true)
             .read(true)
             .write(true) // for creation requirement
-            .open(config.data_path.deref())
+            .open(config.data_path.join("notes"))
             .context(format!("Could not open {:#?}", config.data_path))?;
 
-        if file
+        if note_file
             .metadata()
             .context(format!("Could not open {:#?}", config.data_path))?
             .len()
@@ -148,11 +148,36 @@ impl App {
                 notes: BTreeMap::new(),
             })
         } else {
-            let notes: NoteCollection = serde_json::from_reader(file).context(format!(
-                "serde_json failed to read from file at {:#?}",
+            Ok(serde_json::from_reader(note_file).context(format!(
+                "serde_json failed to read 'notes' file in {:#?}",
                 config.data_path
-            ))?;
-            Ok(notes)
+            ))?)
+        }
+    }
+
+    pub fn read_tag_collection(config: &Config) -> AResult<TagCollection> {
+        let tag_file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true) // for creation requirement
+            .open(config.data_path.join("tags"))
+            .context(format!("Could not open {:#?}", config.data_path))?;
+
+        if tag_file
+            .metadata()
+            .context(format!("Could not open {:#?}", config.data_path))?
+            .len()
+            == 0
+        {
+            Ok(TagCollection {
+                tags: BTreeMap::new(),
+                max_id: TagID(0),
+            })
+        } else {
+            Ok(serde_json::from_reader(tag_file).context(format!(
+                "serde_json failed to read 'tags' file in {:#?}",
+                config.data_path
+            ))?)
         }
     }
 
@@ -160,17 +185,31 @@ impl App {
         let mut file = OpenOptions::new()
             .write(true)
             .truncate(true)
-            .open(self.config.data_path.deref())?;
+            .open(self.config.data_path.join("notes").deref())?;
 
         let _ = self.unfocus(); // remove any focus
 
         let serialized = serde_json::to_string(&self.notes)?;
         file.write(serialized.as_bytes())?;
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(self.config.data_path.join("tags").deref())?;
+
+        let serialized = serde_json::to_string(&self.tags)?;
+        file.write(serialized.as_bytes())?;
         Ok(())
     }
 
-    pub fn add_note(&mut self, title: String) {
-        let new_note = self.note_factory.create_note(title);
+    pub fn add_note(&mut self, title: String, tag: Option<TagID>) {
+        let new_note = self.note_factory.create_note(title, tag);
+
+        // update tag ref count
+        tag.clone()
+            .and_then(|id| self.tags.get_mut(id))
+            .map(|t| t.refs = t.refs + 1);
+
         self.displaying.push(new_note.id);
         self.notes.add(new_note);
     }
@@ -283,6 +322,13 @@ impl App {
 
     pub fn delete(&mut self, id: NoteID) {
         self.displaying.retain(|note_id| *note_id != id);
+        if let Some(note) = self.get_note(&id) {
+            if let Some(v) = &note.tag.clone() {
+                v.iter().for_each(|&id| {
+                    self.tags.get_mut(id).map(|tag| tag.refs = tag.refs - 1);
+                });
+            }
+        }
         self.notes.remove(&id);
     }
 

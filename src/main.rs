@@ -19,6 +19,7 @@ use ui::{UIMut, UI};
 mod app;
 mod config;
 mod note;
+mod tag;
 mod ui;
 mod vim;
 
@@ -94,6 +95,9 @@ fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<(
                     }
                     KeyCode::Char('K') | KeyCode::Char('H') => {
                         app.move_left();
+                    }
+                    KeyCode::Char('T') => {
+                        UIMut::new(app).add_tag(terminal)?;
                     }
                     KeyCode::Char(':') => {
                         app.current_screen = CurrentScreen::Command;

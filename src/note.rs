@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::tag::TagID;
+use std::collections::BTreeSet;
+
 #[derive(Clone, Copy, Ord, Eq, PartialEq, PartialOrd, Serialize, Deserialize, Debug)]
 pub struct NoteID(u16);
 
@@ -36,6 +39,7 @@ pub struct Note {
     pub items: Vec<ToDo>,
     pub focused: bool,
     pub displayed: bool,
+    pub tag: Option<BTreeSet<TagID>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -67,14 +71,18 @@ impl NoteFactory {
             note_id: id,
         })
     }
-
-    pub fn create_note(&mut self, title: String) -> Note {
+    pub fn create_note(&mut self, title: String, tag: Option<impl Into<TagID>>) -> Note {
         Note {
             title,
             id: self.note_id.next(),
             items: Vec::new(),
             focused: false,
             displayed: true,
+            tag: tag.map(|i| i.into()).map(|id| {
+                let mut set = BTreeSet::new();
+                set.insert(id);
+                set
+            }),
         }
     }
 }
@@ -86,6 +94,17 @@ impl Note {
 
     pub fn focus(&mut self) {
         self.focused = true;
+    }
+
+    pub fn add_tag(&mut self, id: TagID) -> bool {
+        if let Some(v) = &mut self.tag {
+            v.insert(id)
+        } else {
+            let mut set = BTreeSet::new();
+            set.insert(id);
+            self.tag.replace(set);
+            true
+        }
     }
 
     pub fn displayed(&self) -> bool {
