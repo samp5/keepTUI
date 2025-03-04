@@ -289,6 +289,57 @@ impl<'a> Vim<'a> {
             Mode::Normal | Mode::Visual | Mode::Operator(_) => {
                 match input {
                     Input {
+                        key: Key::Char(target),
+                        ctrl: false,
+                        ..
+                    } if matches!(
+                        self.pending,
+                        Input {
+                            key: Key::Char('f'),
+                            ctrl: false,
+                            ..
+                        }
+                    ) =>
+                    {
+                        let (row, col) = textarea.cursor();
+                        if let Some(line) = self.line(textarea) {
+                            let index = line
+                                .chars()
+                                .enumerate()
+                                .skip(col + 1)
+                                .find(|(_, c)| *c == target)
+                                .map(|(i, _)| i)
+                                .unwrap_or(col);
+                            textarea.move_cursor(CursorMove::Jump(row as u16, index as u16));
+                        }
+                    }
+                    Input {
+                        key: Key::Char(target),
+                        ctrl: false,
+                        ..
+                    } if matches!(
+                        self.pending,
+                        Input {
+                            key: Key::Char('F'),
+                            ctrl: false,
+                            ..
+                        }
+                    ) =>
+                    {
+                        let (row, col) = textarea.cursor();
+                        if let Some(line) = self.line(textarea) {
+                            let index = line
+                                .chars()
+                                .rev()
+                                .enumerate()
+                                .skip(line.chars().count() - col)
+                                .find(|(_, c)| *c == target)
+                                .map(|(i, _)| line.chars().count() - i - 1)
+                                .unwrap_or(col);
+                            textarea.move_cursor(CursorMove::Jump(row as u16, index as u16));
+                        }
+                    }
+                    Input {
                         key: Key::Char('n'),
                         ..
                     } => {
@@ -355,6 +406,13 @@ impl<'a> Vim<'a> {
                         key: Key::Char('$'),
                         ..
                     } => textarea.move_cursor(CursorMove::End),
+                    Input {
+                        key: Key::Char('_'),
+                        ..
+                    } => {
+                        textarea.move_cursor(CursorMove::Head);
+                        Vim::checked_move(textarea, CursorMove::WordForward);
+                    }
                     Input {
                         key: Key::Char('0'),
                         ..
