@@ -26,7 +26,7 @@ impl Mode {
         };
 
         let mode = format!("{} MODE ({})", self, help);
-        let note_title = format!("{}", note_title);
+        let note_title = note_title.to_string();
 
         Block::default()
             .style(Style::default().fg(Color::Gray))
@@ -107,14 +107,14 @@ impl<'a> Vim<'a> {
         for s in line.graphemes(true) {
             match s {
                 "\t" => {
-                    indent = indent + 1;
+                    indent +=  1;
                 }
                 " " => {
                     if spaces == self.editconf.tab_width - 1 {
-                        indent = indent + 1;
+                        indent += 1;
                         spaces = 0;
                     } else {
-                        spaces = spaces + 1;
+                        spaces += 1;
                     }
                 }
                 _ => break,
@@ -156,13 +156,9 @@ impl<'a> Vim<'a> {
         let mut line = line.unwrap();
 
         // find the relative position of the cursor to the checkbox
-        let rel_pos = col
-            .checked_sub(
-                line.find(&self.editconf.complete_str)
+        let rel_pos = col.saturating_sub(line.find(&self.editconf.complete_str)
                     .or_else(|| line.find(&self.editconf.todo_str))
-                    .unwrap_or(0),
-            )
-            .unwrap_or(0);
+                    .unwrap_or(0));
 
         // remove the "tab"
         if let Some(index) = line.find("\t") {
@@ -172,7 +168,7 @@ impl<'a> Vim<'a> {
             line = line
                 .graphemes(true)
                 .skip_while(|&c| {
-                    removed_spaces = removed_spaces + 1;
+                    removed_spaces +=  1;
                     c == " " && removed_spaces <= self.editconf.tab_width
                 })
                 .collect()
@@ -212,20 +208,12 @@ impl<'a> Vim<'a> {
         textarea.move_cursor(CursorMove::Head);
         textarea.start_selection();
         textarea.move_cursor(CursorMove::End);
-        if !textarea.cut() {
-            // line is empty
-            ()
-        }
         let mut line = textarea.yank_text();
 
         // find the relative position of the cursor to the checkbox
-        let rel_pos = col
-            .checked_sub(
-                line.find(&self.editconf.complete_str)
+        let rel_pos = col.saturating_sub(line.find(&self.editconf.complete_str)
                     .or_else(|| line.find(&self.editconf.todo_str))
-                    .unwrap_or(0),
-            )
-            .unwrap_or(0);
+                    .unwrap_or(0));
 
         // insert our tab + line
         textarea.move_cursor(CursorMove::Head);
@@ -493,7 +481,7 @@ impl<'a> Vim<'a> {
                         textarea.move_cursor(CursorMove::End);
                         textarea.insert_newline();
                         textarea.insert_str(&self.editconf.todo_str);
-                        (0..prev_indent).into_iter().for_each(|_| {
+                        (0..prev_indent).for_each(|_| {
                             self.indent(textarea, &" ".repeat(self.editconf.tab_width as usize))
                         });
                         return Transition::Mode(Mode::Insert);
@@ -508,7 +496,7 @@ impl<'a> Vim<'a> {
                         textarea.insert_newline();
                         textarea.move_cursor(CursorMove::Up);
                         textarea.insert_str(&self.editconf.todo_str);
-                        (0..prev_indent).into_iter().for_each(|_| {
+                        (0..prev_indent).for_each(|_| {
                             self.indent(textarea, &" ".repeat(self.editconf.tab_width as usize))
                         });
                         return Transition::Mode(Mode::Insert);
@@ -713,7 +701,7 @@ impl<'a> Vim<'a> {
                     textarea.move_cursor(CursorMove::End);
                     textarea.insert_newline();
                     textarea.insert_str(&self.editconf.todo_str);
-                    (0..prev_indent).into_iter().for_each(|_| {
+                    (0..prev_indent).for_each(|_| {
                         self.indent(textarea, &" ".repeat(self.editconf.tab_width as usize))
                     });
                     Transition::Mode(Mode::Insert)

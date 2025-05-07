@@ -141,7 +141,7 @@ impl Config {
     }
 
     fn data_path() -> AResult<PathBuf> {
-        if let Some(root) = var("XDG_DATA_HOME").ok().filter(|s| s.len() > 0) {
+        if let Some(root) = var("XDG_DATA_HOME").ok().filter(|s| !s.is_empty()) {
             Ok(PathBuf::from(root + "/.keepTUI/notes"))
         } else {
             let home = std::env::var("HOME").map_err(|_| {

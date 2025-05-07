@@ -150,10 +150,7 @@ fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<(
                 },
                 app::CurrentScreen::NoteEdit => {}
                 app::CurrentScreen::NewNote => {}
-                app::CurrentScreen::Command => match key.code {
-                    KeyCode::Esc => app.current_screen = CurrentScreen::Main,
-                    _ => {}
-                },
+                app::CurrentScreen::Command => if key.code == KeyCode::Esc { app.current_screen = CurrentScreen::Main },
                 CurrentScreen::Help => match key.code {
                     KeyCode::Esc | KeyCode::Char('q') => {
                         app.current_screen = CurrentScreen::Main;

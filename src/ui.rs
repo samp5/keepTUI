@@ -50,7 +50,7 @@ pub struct UIMut<'a> {
 impl<'a> UIMut<'a> {
     pub fn new(app: &'a mut App) -> UIMut<'a> {
         UIMut {
-            colors: app.config.user.colors.clone(),
+            colors: app.config.user.colors,
             edit: app.config.user.edit.clone(),
             app,
         }
@@ -108,11 +108,7 @@ impl<'a> UIMut<'a> {
                         .map(|note| {
                             state.selected().map(|index| {
                                 tags.get(index).map(|&id| {
-                                    if note.add_tag(id) {
-                                        added = true
-                                    } else {
-                                        added = false
-                                    }
+                                    added = note.add_tag(id);
                                 })
                             })
                         });
@@ -179,7 +175,9 @@ impl<'a> UIMut<'a> {
                             }
                         }
                     }
-                    new_tag.map(|s| self.app.tags.add(s));
+                    if let Some(s) = new_tag {
+                       self.app.tags.add(s)  
+                    };
                 }
                 Input {
                     key: Key::Char('D'),
@@ -195,8 +193,8 @@ impl<'a> UIMut<'a> {
                     ..
                 } => {
                     state.select(state.selected().map_or_else(
-                        || if tags.len() > 0 { Some(0) } else { None },
-                        |i| Some(i.checked_sub(1).unwrap_or(0)),
+                        || if !tags.is_empty() { Some(0) } else { None },
+                        |i| Some(i.saturating_sub(1)),
                     ));
                 }
                 Input {
@@ -204,8 +202,8 @@ impl<'a> UIMut<'a> {
                     ..
                 } => {
                     state.select(state.selected().map_or_else(
-                        || if tags.len() > 0 { Some(0) } else { None },
-                        |i| Some((i + 1) % tags.len() as usize),
+                        || if !tags.is_empty(){ Some(0) } else { None },
+                        |i| Some((i + 1) % tags.len()),
                     ));
                 }
                 _ => {}
@@ -293,15 +291,12 @@ impl<'a> UIMut<'a> {
         }
 
         match text_area.yank_text() {
-            s if s.len() > 0 => self.app.clipboard = s,
+            s if !s.is_empty() => self.app.clipboard = s,
             _ => (),
         }
 
         let tab_length = text_area.tab_length();
-        self.app
-            .focused()
-            .and_then(|id| self.app.get_mut_note(&id))
-            .map(|n| {
+        if let Some(n) = self.app.focused().and_then(|id| self.app.get_mut_note(&id)) {
                 n.items = text_area
                     .into_lines()
                     .into_iter()
@@ -313,15 +308,15 @@ impl<'a> UIMut<'a> {
                             .graphemes(true)
                             .skip_while(|&c| match c {
                                 "\t" => {
-                                    indent = indent + 1;
+                                    indent += 1;
                                     true
                                 }
                                 " " => {
                                     if spaces == tab_length - 1 {
-                                        indent = indent + 1;
+                                        indent += 1;
                                         spaces = 0;
                                     } else {
-                                        spaces = spaces + 1;
+                                        spaces +=  1;
                                     }
                                     true
                                 }
@@ -341,10 +336,8 @@ impl<'a> UIMut<'a> {
                                 indent,
                             )
                         }
-                    })
-                    .collect()
-            });
-
+                    }).collect();
+        }
         Ok(())
     }
 
@@ -415,8 +408,7 @@ impl<'a> UIMut<'a> {
                         self.app.add_note(
                             textarea
                                 .lines()
-                                .to_vec()
-                                .into_iter()
+                                .iter().cloned()
                                 .skip_while(|s| s.is_empty())
                                 .collect::<Vec<_>>()
                                 .concat(),
@@ -447,8 +439,8 @@ impl<'a> UIMut<'a> {
                         self.app.add_note(
                             textarea
                                 .lines()
-                                .to_vec()
-                                .into_iter()
+                                .iter()
+                                .cloned()
                                 .skip_while(|s| s.is_empty())
                                 .collect::<Vec<_>>()
                                 .concat(),
@@ -518,7 +510,9 @@ impl<'a> UIMut<'a> {
                                 }
                             }
                         }
-                        new_tag.map(|s| self.app.tags.add(s));
+                        if let Some(s) = new_tag {
+                            self.app.tags.add(s);
+                        };
                     }
                     Input {
                         key: Key::Char('D'),
@@ -534,8 +528,8 @@ impl<'a> UIMut<'a> {
                         ..
                     } => {
                         state.select(state.selected().map_or_else(
-                            || if tags.len() > 0 { Some(0) } else { None },
-                            |i| Some(i.checked_sub(1).unwrap_or(0)),
+                            || if !tags.is_empty() { Some(0) } else { None },
+                            |i| Some(i.saturating_sub(1)),
                         ));
                     }
                     Input {
@@ -543,8 +537,8 @@ impl<'a> UIMut<'a> {
                         ..
                     } => {
                         state.select(state.selected().map_or_else(
-                            || if tags.len() > 0 { Some(0) } else { None },
-                            |i| Some((i + 1) % tags.len() as usize),
+                            || if !tags.is_empty() { Some(0) } else { None },
+                            |i| Some((i + 1) % tags.len()),
                         ));
                     }
                     _ => {}
@@ -796,7 +790,7 @@ impl<'a> UI<'a> {
 
         let exit_text = Text::styled(
             CurrentScreen::Exiting.content(),
-            Style::default().fg(Color::Red.into()),
+            Style::default().fg(Color::Red),
         );
 
         let area = centered_rect(30, 20, *chunk);
@@ -829,7 +823,7 @@ impl<'a> UI<'a> {
     ) -> IOResult<()> {
         let text = Span::styled(
             message.to_string() + " - Press any key to continue",
-            Style::default().fg(Color::LightBlue.into()),
+            Style::default().fg(Color::LightBlue),
         );
         terminal.draw(|f| {
             let chunks = self.main_layout(f);
@@ -848,7 +842,7 @@ impl<'a> UI<'a> {
     pub fn send_err<B: Backend>(&self, message: &str, terminal: &mut Terminal<B>) -> IOResult<()> {
         let text = Span::styled(
             message.to_string() + " - Press any key to continue",
-            Style::default().fg(Color::LightRed.into()),
+            Style::default().fg(Color::LightRed),
         );
         terminal.draw(|f| {
             let chunks = self.main_layout(f);

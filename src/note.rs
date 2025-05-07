@@ -53,7 +53,7 @@ impl NoteCollection {
     }
 
     pub fn remove(&mut self, id: &NoteID) {
-        self.notes.remove(&id);
+        self.notes.remove(id);
     }
 
     pub fn max_id(&self) -> Option<NoteID> {
@@ -71,7 +71,7 @@ impl NoteFactory {
             note_id: id,
         })
     }
-    pub fn create_note(&mut self, title: String, tag: Option<impl Into<TagID>>) -> Note {
+    pub fn create(&mut self, title: String, tag: Option<impl Into<TagID>>) -> Note {
         Note {
             title,
             id: self.note_id.next(),

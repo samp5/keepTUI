@@ -100,7 +100,7 @@ impl App {
             .notes
             .iter()
             .filter(|(_, n)| n.displayed())
-            .map(|(id, _)| id.clone())
+            .map(|(id, _)| *id)
             .collect::<Vec<_>>();
 
         let max_id = notes.max_id();
@@ -133,6 +133,7 @@ impl App {
     pub fn read_note_collection(config: &Config) -> AResult<NoteCollection> {
         let note_file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true) // for creation requirement
             .open(config.data_path.join("notes"))
@@ -158,6 +159,7 @@ impl App {
     pub fn read_tag_collection(config: &Config) -> AResult<TagCollection> {
         let tag_file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true) // for creation requirement
             .open(config.data_path.join("tags"))
@@ -190,7 +192,7 @@ impl App {
         let _ = self.unfocus(); // remove any focus
 
         let serialized = serde_json::to_string(&self.notes)?;
-        file.write(serialized.as_bytes())?;
+        file.write_all(serialized.as_bytes())?;
 
         let mut file = OpenOptions::new()
             .write(true)
@@ -198,17 +200,16 @@ impl App {
             .open(self.config.data_path.join("tags").deref())?;
 
         let serialized = serde_json::to_string(&self.tags)?;
-        file.write(serialized.as_bytes())?;
+        file.write_all(serialized.as_bytes())?;
         Ok(())
     }
 
     pub fn add_note(&mut self, title: String, tag: Option<TagID>) {
-        let new_note = self.note_factory.create_note(title, tag);
+        let new_note = self.note_factory.create(title, tag);
 
         // update tag ref count
-        tag.clone()
-            .and_then(|id| self.tags.get_mut(id))
-            .map(|t| t.refs = t.refs + 1);
+        tag.and_then(|id| self.tags.get_mut(id))
+            .iter_mut().for_each(|t| t.refs +=  1);
 
         self.displaying.push(new_note.id);
         self.notes.add(new_note);
@@ -225,15 +226,12 @@ impl App {
             .iter()
             .position(|&e| Some(e) == self.focused());
 
-        let next = curr.map(|i| i + 1).and_then(|i| match i {
-            valid if i < self.displaying.len() && i > 0 => Some(valid),
-            invalid => Some(invalid % self.displaying.len()),
+        let next = curr.map(|i| i + 1).map(|i| match i {
+            valid if i < self.displaying.len() && i > 0 => valid,
+            invalid => invalid % self.displaying.len(),
         });
 
-        match (curr, next) {
-            (Some(c), Some(n)) => self.displaying.swap(c, n),
-            _ => (),
-        }
+        if let (Some(c), Some(n)) = (curr, next) { self.displaying.swap(c, n) }
     }
 
     pub fn focus_right(&mut self) {
@@ -286,15 +284,12 @@ impl App {
             .iter()
             .position(|&e| Some(e) == self.focused());
 
-        let prev = curr.map(|i| i - 1).and_then(|i| match i {
-            valid if i < self.displaying.len() && i > 0 => Some(valid),
-            invalid => Some(invalid % self.displaying.len()),
+        let prev = curr.map(|i| i - 1).map(|i| match i {
+            valid if i < self.displaying.len() && i > 0 => valid,
+            invalid => invalid % self.displaying.len(),
         });
 
-        match (curr, prev) {
-            (Some(c), Some(p)) => self.displaying.swap(c, p),
-            _ => (),
-        }
+        if let (Some(c), Some(p)) = (curr, prev) { self.displaying.swap(c, p) }
     }
 
     pub fn focus(&mut self, id: Option<NoteID>) {
@@ -303,17 +298,18 @@ impl App {
     }
 
     pub fn unfocus(&mut self) -> Option<NoteID> {
-        self.note_focus
-            .and_then(|id| self.get_mut_note(&id))
-            .map(|note| note.unfocus());
+        if let Some(n) = self.note_focus
+                    .and_then(|id| self.get_mut_note(&id)) {
+            n.unfocus();
+        }
         self.note_focus.take()
     }
     pub fn get_mut_note(&mut self, id: &NoteID) -> Option<&mut Note> {
-        self.notes.notes.get_mut(&id)
+        self.notes.notes.get_mut(id)
     }
 
     pub fn get_note(&self, id: &NoteID) -> Option<&Note> {
-        self.notes.notes.get(&id)
+        self.notes.notes.get(id)
     }
 
     pub fn focused(&self) -> Option<NoteID> {
@@ -325,7 +321,9 @@ impl App {
         if let Some(note) = self.get_note(&id) {
             if let Some(v) = &note.tag.clone() {
                 v.iter().for_each(|&id| {
-                    self.tags.get_mut(id).map(|tag| tag.refs = tag.refs - 1);
+                    if let Some(tag) = self.tags.get_mut(id) {
+                     tag.refs -=  1   
+                    }
                 });
             }
         }
@@ -340,7 +338,7 @@ impl App {
     }
 
     pub fn parse_args() -> IOResult<()> {
-        for arg in args().into_iter().skip(1) {
+        args().skip(1).for_each(|arg| {
             match arg.as_str() {
                 "--help" => {
                     App::print_long_help(true);
@@ -363,7 +361,7 @@ impl App {
                     exit(0);
                 }
             }
-        }
+        });
         Ok(())
     }
 }

@@ -16,20 +16,20 @@ pub struct Tag {
     pub refs: u8,
 }
 
-impl Into<TagID> for Tag {
-    fn into(self) -> TagID {
-        self.id.clone()
+impl From<Tag> for TagID {
+    fn from(val: Tag) -> Self {
+        val.id
     }
 }
-impl Into<TagID> for &Tag {
-    fn into(self) -> TagID {
-        self.id.clone()
+impl From<&Tag> for TagID {
+    fn from(val: &Tag) -> Self {
+        val.id
     }
 }
 
-impl<'a> Into<ListItem<'a>> for &'a Tag {
-    fn into(self) -> ListItem<'a> {
-        let text = format!("{}\t refs: {}", self.name.clone(), self.refs);
+impl<'a> From<&'a Tag> for ListItem<'a> {
+    fn from(val: &'a Tag) -> Self {
+        let text = format!("{}\t refs: {}", val.name.clone(), val.refs);
 
         let item = ListItem::new(text);
         item.set_style(Style::default().add_modifier(Modifier::ITALIC))
@@ -46,16 +46,16 @@ pub struct TagCollectionIter<'a> {
     pub iter: Iter<'a, TagID, Tag>,
 }
 
-impl<'a> Iterator for TagCollectionIter<'a> {
+impl Iterator for TagCollectionIter<'_> {
     type Item = TagID;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().map(|(id, _)| id.clone())
+        self.iter.next().map(|(&id, _)| id)
     }
 }
 
 impl TagCollection {
-    pub fn iter<'a>(&'a self) -> TagCollectionIter<'a> {
+    pub fn iter(&'_ self) -> TagCollectionIter<'_> {
         TagCollectionIter {
             iter: self.tags.iter(),
         }
@@ -85,7 +85,9 @@ impl TagCollection {
         );
     }
     pub fn increase_ref(&mut self, id: &TagID) {
-        self.tags.get_mut(id).map(|t| t.refs = t.refs + 1);
+        if let Some(t) = self.tags.get_mut(id) {
+           t.refs +=  1  
+        };
     }
 
     pub fn remove_by_id(&mut self, id: &TagID) {
