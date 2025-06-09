@@ -1,20 +1,24 @@
-First project in Rust.
 
-### Usage
-Run `keep --help` to see all available options! 
+`keep` is a TUI for to-do lists.
 
-Configure layout and color scheme via a TOML configuration file. See `keep --dump-config` for all available options and `keep --config` for details about each option!
+Loosely inspired by Google Keep, or rather, what I use Google Keep for: small daily to-dos structuring what I want to accomplish each week.
 
-Run `cargo build --release` and move `./target/release/keep` to your `$PATH`
+### Features
+- **VIM-ish** - Simple vim emulator to bring vim motions(ish) to editing your to-do lists
+- **Local notes** - I often found I wanted separate lists for different projects, e.g. in my `keepTUI` project directory
+    - When run with `-l` or `--local`, `keep` will first look in the current working directory for a `.keep` folder, and, if found, will display and edit this data.
+#### In progress:
+- [ ] Fuzzy search over note content and titles
+- [ ] Note tags and collections
 
-### Pictures!
-The main view (with some notes added)
+### Shell completions
+Generate shell completion information with `keep --generate-completions=<SHELL>` for `fish`, `bash`, or `zsh` 
 
-![main view with some notes added](https://github.com/samp5/keepTUI/blob/main/resources/full.jpeg)
+```bash
+$ keep --generate-completions=fish | source
+```
 
-Editing a note (with VIM keybinds)
+### Configuration
+Use `keep --dump-config` to get a sample configuration with all keys set to their default values. Colors can be set with hex values (`#FFFFFF`), ANSI terminal color indices, or common color names (`red`). Configuration keys are generally self-explanatory. 
 
-![](https://github.com/samp5/keepTUI/blob/main/resources/edit.jpeg)
-
-Adding a new note
-![](https://github.com/samp5/keepTUI/blob/main/resources/add.jpeg)
+Default values are used for any key not specified by the configuration file.

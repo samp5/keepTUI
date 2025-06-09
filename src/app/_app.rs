@@ -1,27 +1,25 @@
 use std::{
     collections::BTreeMap,
-    env::args,
     fs::{create_dir, OpenOptions},
-    io::Write,
+    io::{Error as IOError, ErrorKind as IOErrorKind, Write, Result as IOResult},
     ops::Deref,
-    process::exit,
 };
+
 
 use anyhow::Context;
 use anyhow::Result as AResult;
 use indoc::indoc;
 
-use crate::{
-    config::{Config, UserConfig},
-    note::{Note, NoteCollection, NoteFactory, NoteID},
-    tag::{TagCollection, TagID},
-};
-use std::io::Result as IOResult;
+use super::{app_data::AppData, note::*};
+use super::tag::*;
+
+use crate::config::{Config, RuntimeOptions};
 
 #[derive(PartialEq, Eq)]
 pub enum CurrentScreen {
     Main,
     NoteEdit,
+    NoteSearch,
     Exiting,
     NewNote,
     Command,
@@ -65,6 +63,7 @@ impl CurrentScreen {
             CurrentScreen::NewNote => "New Note",
             CurrentScreen::Command => "Command Mode",
             CurrentScreen::Help => "Help",
+            CurrentScreen::NoteSearch => "NoteSearch",
         }
     }
 
@@ -76,6 +75,7 @@ impl CurrentScreen {
             CurrentScreen::NewNote => "<ESC> cancel, <ENTER> accept ",
             CurrentScreen::Command => "<ESC> cancel, <ENTER> accept ",
             CurrentScreen::Help => "<ESC> back",
+            CurrentScreen::NoteSearch => "<ESC> back, <ENTER> add to display",
         }
     }
 }
@@ -90,17 +90,18 @@ pub struct App {
     pub modified: bool,
     pub note_factory: NoteFactory,
     pub config: Config,
+    pub runtime: RuntimeOptions,
 }
 
 impl App {
-    pub fn new(config: Config) -> AResult<App> {
-        let (notes, tags) = App::read_from_file(&config)?;
+    pub fn new(config: Config, runtime_opts: RuntimeOptions) -> AResult<App> {
+        let (notes, tags) = AppData::read(&config, &runtime_opts)?;
 
         let displaying = notes
             .notes
             .iter()
             .filter(|(_, n)| n.displayed())
-            .map(|(id, _)| *id)
+            .map(|(&id, _)| id)
             .collect::<Vec<_>>();
 
         let max_id = notes.max_id();
@@ -112,104 +113,21 @@ impl App {
             tags,
             displaying,
             note_focus: None,
+            runtime: runtime_opts,
             clipboard: String::new(),
             modified: false,
             note_factory: NoteFactory::new(max_id),
         })
     }
 
-    pub fn read_from_file(config: &Config) -> AResult<(NoteCollection, TagCollection)> {
-        if !config.data_path.exists() && config.data_path.metadata().is_ok_and(|d| d.is_dir()) {
-            create_dir(config.data_path.clone())
-                .context(format!("failed to create path {:#?}", config.data_path))?
-        }
-
-        Ok((
-            App::read_note_collection(config)?,
-            App::read_tag_collection(config)?,
-        ))
-    }
-
-    pub fn read_note_collection(config: &Config) -> AResult<NoteCollection> {
-        let note_file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true) // for creation requirement
-            .open(config.data_path.join("notes"))
-            .context(format!("Could not open {:#?}", config.data_path))?;
-
-        if note_file
-            .metadata()
-            .context(format!("Could not open {:#?}", config.data_path))?
-            .len()
-            == 0
-        {
-            Ok(NoteCollection {
-                notes: BTreeMap::new(),
-            })
-        } else {
-            Ok(serde_json::from_reader(note_file).context(format!(
-                "serde_json failed to read 'notes' file in {:#?}",
-                config.data_path
-            ))?)
-        }
-    }
-
-    pub fn read_tag_collection(config: &Config) -> AResult<TagCollection> {
-        let tag_file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true) // for creation requirement
-            .open(config.data_path.join("tags"))
-            .context(format!("Could not open {:#?}", config.data_path))?;
-
-        if tag_file
-            .metadata()
-            .context(format!("Could not open {:#?}", config.data_path))?
-            .len()
-            == 0
-        {
-            Ok(TagCollection {
-                tags: BTreeMap::new(),
-                max_id: TagID(0),
-            })
-        } else {
-            Ok(serde_json::from_reader(tag_file).context(format!(
-                "serde_json failed to read 'tags' file in {:#?}",
-                config.data_path
-            ))?)
-        }
-    }
-
-    pub fn write_data(&mut self) -> IOResult<()> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(self.config.data_path.join("notes").deref())?;
-
-        let _ = self.unfocus(); // remove any focus
-
-        let serialized = serde_json::to_string(&self.notes)?;
-        file.write_all(serialized.as_bytes())?;
-
-        let mut file = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(self.config.data_path.join("tags").deref())?;
-
-        let serialized = serde_json::to_string(&self.tags)?;
-        file.write_all(serialized.as_bytes())?;
-        Ok(())
-    }
 
     pub fn add_note(&mut self, title: String, tag: Option<TagID>) {
         let new_note = self.note_factory.create(title, tag);
 
         // update tag ref count
         tag.and_then(|id| self.tags.get_mut(id))
-            .iter_mut().for_each(|t| t.refs +=  1);
+            .iter_mut()
+            .for_each(|t| t.refs += 1);
 
         self.displaying.push(new_note.id);
         self.notes.add(new_note);
@@ -231,7 +149,9 @@ impl App {
             invalid => invalid % self.displaying.len(),
         });
 
-        if let (Some(c), Some(n)) = (curr, next) { self.displaying.swap(c, n) }
+        if let (Some(c), Some(n)) = (curr, next) {
+            self.displaying.swap(c, n)
+        }
     }
 
     pub fn focus_right(&mut self) {
@@ -289,7 +209,9 @@ impl App {
             invalid => invalid % self.displaying.len(),
         });
 
-        if let (Some(c), Some(p)) = (curr, prev) { self.displaying.swap(c, p) }
+        if let (Some(c), Some(p)) = (curr, prev) {
+            self.displaying.swap(c, p)
+        }
     }
 
     pub fn focus(&mut self, id: Option<NoteID>) {
@@ -298,8 +220,7 @@ impl App {
     }
 
     pub fn unfocus(&mut self) -> Option<NoteID> {
-        if let Some(n) = self.note_focus
-                    .and_then(|id| self.get_mut_note(&id)) {
+        if let Some(n) = self.note_focus.and_then(|id| self.get_mut_note(&id)) {
             n.unfocus();
         }
         self.note_focus.take()
@@ -322,46 +243,11 @@ impl App {
             if let Some(v) = &note.tag.clone() {
                 v.iter().for_each(|&id| {
                     if let Some(tag) = self.tags.get_mut(id) {
-                     tag.refs -=  1   
+                        tag.refs -= 1
                     }
                 });
             }
         }
         self.notes.remove(&id);
-    }
-
-    fn dump_config() {
-        print!(
-            "{}",
-            toml::to_string_pretty(&UserConfig::default()).unwrap()
-        );
-    }
-
-    pub fn parse_args() -> IOResult<()> {
-        args().skip(1).for_each(|arg| {
-            match arg.as_str() {
-                "--help" => {
-                    App::print_long_help(true);
-                    exit(0);
-                }
-                "-h" => {
-                    App::print_short_help(true);
-                    exit(0);
-                }
-                "-d" | "--dump-config" => {
-                    App::dump_config();
-                    exit(0);
-                }
-                "-c" | "--config" => {
-                    App::config_info();
-                    exit(0);
-                }
-                other => {
-                    App::unrecognized_option(other);
-                    exit(0);
-                }
-            }
-        });
-        Ok(())
     }
 }

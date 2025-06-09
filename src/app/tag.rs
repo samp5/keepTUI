@@ -6,7 +6,7 @@ use ratatui::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Copy, Debug, Clone, Serialize, Deserialize, Ord, Eq, PartialEq, PartialOrd)]
+#[derive(Copy, Debug, Clone, Serialize, Deserialize, Default,Ord, Eq, PartialEq, PartialOrd)]
 pub struct TagID(pub u8);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,7 +36,7 @@ impl<'a> From<&'a Tag> for ListItem<'a> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TagCollection {
     pub tags: BTreeMap<TagID, Tag>,
     pub max_id: TagID,

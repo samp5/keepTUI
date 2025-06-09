@@ -1,6 +1,10 @@
+mod app;
+mod config;
+mod ui;
+
 use anyhow::Result as AResult;
-use app::{App, CurrentScreen};
-use config::Config;
+use app::{App, AppData, CurrentScreen};
+use clap::Parser;
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyboardEnhancementFlags,
@@ -13,22 +17,20 @@ use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,
 };
-use std::{self, io};
+use std::io;
 use ui::{UIMut, UI};
+use config::{Args, Config};
 
-mod app;
-mod config;
-mod note;
-mod tag;
-mod ui;
-mod vim;
+
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    App::parse_args()?;
 
-    let config = Config::new()?;
+    let args = Args::parse();
+    args.handle_output();
 
-    let mut app = App::new(config)?;
+    let config = Config::from_args(&args)?;
+
+    let mut app = App::new(config, args.into())?;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -42,6 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     main_loop(&mut terminal, &mut app)?;
+
     disable_raw_mode()?;
 
     execute!(
@@ -59,16 +62,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<()> {
     loop {
         let ui = UI::new(app);
-        terminal.draw(|f| ui.run(f))?;
+        terminal.draw(|f| ui.draw(f))?;
         if let Event::Key(key) = event::read()? {
             if key.kind == event::KeyEventKind::Release {
                 continue;
             }
 
             match app.current_screen {
-                app::CurrentScreen::Exiting => match key.code {
+                CurrentScreen::Exiting => match key.code {
                     KeyCode::Char('y' | 'Y') => {
-                        app.write_data()?;
+                        AppData::write(app)?;
                         return Ok(());
                     }
                     KeyCode::Char('n' | 'N') => {
@@ -80,7 +83,11 @@ fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<(
                     }
                     _ => {}
                 },
-                app::CurrentScreen::Main => match key.code {
+                CurrentScreen::NoteSearch => {
+                    UIMut::new(app).search_notes(terminal)?;
+                    app.current_screen = CurrentScreen::Main;
+                }
+                CurrentScreen::Main => match key.code {
                     KeyCode::Char('q') => {
                         app.current_screen = CurrentScreen::Exiting;
                     }
@@ -98,6 +105,7 @@ fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<(
                     }
                     KeyCode::Char('T') => {
                         UIMut::new(app).add_tag(terminal)?;
+                        app.current_screen = CurrentScreen::Main;
                     }
                     KeyCode::Char(':') => {
                         app.current_screen = CurrentScreen::Command;
@@ -105,7 +113,7 @@ fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<(
                         if let Ok(s) = res {
                             match s.as_str() {
                                 ":wq" => {
-                                    app.write_data()?;
+                                    AppData::write(app)?;
                                     return Ok(());
                                 }
                                 ":q!" => return Ok(()),
@@ -135,6 +143,10 @@ fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<(
                         UIMut::new(app).edit_note(terminal)?;
                         app.current_screen = CurrentScreen::Main;
                     }
+                    KeyCode::Char('f')  => {
+                        app.current_screen = CurrentScreen::NoteSearch;
+                        continue;
+                    }
                     KeyCode::Char('a') => {
                         app.current_screen = CurrentScreen::NewNote;
                         UIMut::new(app).new_note(terminal)?;
@@ -146,11 +158,11 @@ fn main_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> AResult<(
                         }
                     }
                     KeyCode::Char('?') => app.current_screen = CurrentScreen::Help,
-                    _ => {}
+                    _ => (),
                 },
-                app::CurrentScreen::NoteEdit => {}
-                app::CurrentScreen::NewNote => {}
-                app::CurrentScreen::Command => if key.code == KeyCode::Esc { app.current_screen = CurrentScreen::Main },
+                CurrentScreen::NoteEdit => {}
+                CurrentScreen::NewNote => {}
+                CurrentScreen::Command => if key.code == KeyCode::Esc { app.current_screen = CurrentScreen::Main },
                 CurrentScreen::Help => match key.code {
                     KeyCode::Esc | KeyCode::Char('q') => {
                         app.current_screen = CurrentScreen::Main;

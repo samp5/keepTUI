@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::tag::TagID;
+use super::tag::TagID;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Ord, Eq, PartialEq, PartialOrd, Serialize, Deserialize, Debug)]
@@ -15,6 +15,7 @@ impl NoteID {
     }
 }
 
+/// Represents a to-do item as represented in a Note
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ToDo {
     pub indent: usize,
@@ -42,7 +43,36 @@ pub struct Note {
     pub tag: Option<BTreeSet<TagID>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+impl Note {
+    pub fn is_focused(&self) -> bool {
+        self.focused
+    }
+
+    pub fn focus(&mut self) {
+        self.focused = true;
+    }
+
+    pub fn add_tag(&mut self, id: TagID) -> bool {
+        if let Some(v) = &mut self.tag {
+            v.insert(id)
+        } else {
+            let mut set = BTreeSet::new();
+            set.insert(id);
+            self.tag.replace(set);
+            true
+        }
+    }
+
+    pub fn displayed(&self) -> bool {
+        self.displayed
+    }
+
+    pub fn unfocus(&mut self) {
+        self.focused = false;
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct NoteCollection {
     pub notes: BTreeMap<NoteID, Note>,
 }
@@ -87,31 +117,3 @@ impl NoteFactory {
     }
 }
 
-impl Note {
-    pub fn is_focused(&self) -> bool {
-        self.focused
-    }
-
-    pub fn focus(&mut self) {
-        self.focused = true;
-    }
-
-    pub fn add_tag(&mut self, id: TagID) -> bool {
-        if let Some(v) = &mut self.tag {
-            v.insert(id)
-        } else {
-            let mut set = BTreeSet::new();
-            set.insert(id);
-            self.tag.replace(set);
-            true
-        }
-    }
-
-    pub fn displayed(&self) -> bool {
-        self.displayed
-    }
-
-    pub fn unfocus(&mut self) {
-        self.focused = false;
-    }
-}

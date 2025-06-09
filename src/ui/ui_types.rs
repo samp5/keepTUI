@@ -1,7 +1,7 @@
 use crate::app::{App, CurrentScreen};
 use crate::config::{ColorScheme, EditConfig, LayoutConfig};
-use crate::note::ToDo;
-use crate::vim::{Mode, Transition, Vim};
+use crate::app::ToDo;
+use super::vim::{Mode, Transition, Vim};
 use anyhow::Result as AResult;
 use crossterm::event::{read, KeyCode, KeyEventState, KeyModifiers};
 use ratatui::backend::Backend;
@@ -50,10 +50,14 @@ pub struct UIMut<'a> {
 impl<'a> UIMut<'a> {
     pub fn new(app: &'a mut App) -> UIMut<'a> {
         UIMut {
-            colors: app.config.user.colors,
-            edit: app.config.user.edit.clone(),
+            colors: app.config.colors.clone(),
+            edit: app.config.edit.clone(),
             app,
         }
+    }
+    pub fn search_notes<B: Backend>(&mut self, _terminal: &mut Terminal<B>) -> AResult<()> {
+        // let mut state = ListState::default();
+        Ok(())
     }
 
     pub fn add_tag<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> AResult<()> {
@@ -88,9 +92,9 @@ impl<'a> UIMut<'a> {
             terminal.draw(|f| {
                 let chunks = ui.main_layout(f);
 
-                ui.header(f, &chunks[0]);
+                ui.draw_header(f, &chunks[0]);
                 f.render_stateful_widget(list, centered_rect(40, 30, chunks[1]), &mut state);
-                ui.footer(f, &chunks[2]);
+                ui.draw_footer(f, &chunks[2]);
             })?;
             match crossterm::event::read()?.into() {
                 Input { key: Key::Esc, .. }
@@ -137,12 +141,12 @@ impl<'a> UIMut<'a> {
                     loop {
                         terminal.draw(|f| {
                             let chunks = ui.main_layout(f);
-                            ui.header(f, &chunks[0]);
+                            ui.draw_header(f, &chunks[0]);
                             f.render_widget(
                                 new_text_area.widget(),
                                 centered_rect(40, 30, chunks[1]),
                             );
-                            ui.footer(f, &chunks[2]);
+                            ui.draw_footer(f, &chunks[2]);
                         })?;
                         match crossterm::event::read()?.into() {
                             Input { key: Key::Esc, .. }
@@ -176,7 +180,7 @@ impl<'a> UIMut<'a> {
                         }
                     }
                     if let Some(s) = new_tag {
-                       self.app.tags.add(s)  
+                        self.app.tags.add(s)
                     };
                 }
                 Input {
@@ -202,7 +206,7 @@ impl<'a> UIMut<'a> {
                     ..
                 } => {
                     state.select(state.selected().map_or_else(
-                        || if !tags.is_empty(){ Some(0) } else { None },
+                        || if !tags.is_empty() { Some(0) } else { None },
                         |i| Some((i + 1) % tags.len()),
                     ));
                 }
@@ -267,8 +271,8 @@ impl<'a> UIMut<'a> {
         loop {
             terminal.draw(|f| {
                 let chunks = ui.main_layout(f);
-                ui.header(f, &chunks[0]);
-                ui.footer(f, &chunks[2]);
+                ui.draw_header(f, &chunks[0]);
+                ui.draw_footer(f, &chunks[2]);
                 f.render_widget(text_area.widget(), centered_rect(70, 70, f.size()))
             })?;
 
@@ -297,46 +301,47 @@ impl<'a> UIMut<'a> {
 
         let tab_length = text_area.tab_length();
         if let Some(n) = self.app.focused().and_then(|id| self.app.get_mut_note(&id)) {
-                n.items = text_area
-                    .into_lines()
-                    .into_iter()
-                    .filter(|s| !s.is_empty())
-                    .map(|s| {
-                        let mut indent = 0;
-                        let mut spaces = 0;
-                        let s = s
-                            .graphemes(true)
-                            .skip_while(|&c| match c {
-                                "\t" => {
+            n.items = text_area
+                .into_lines()
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .map(|s| {
+                    let mut indent = 0;
+                    let mut spaces = 0;
+                    let s = s
+                        .graphemes(true)
+                        .skip_while(|&c| match c {
+                            "\t" => {
+                                indent += 1;
+                                true
+                            }
+                            " " => {
+                                if spaces == tab_length - 1 {
                                     indent += 1;
-                                    true
+                                    spaces = 0;
+                                } else {
+                                    spaces += 1;
                                 }
-                                " " => {
-                                    if spaces == tab_length - 1 {
-                                        indent += 1;
-                                        spaces = 0;
-                                    } else {
-                                        spaces +=  1;
-                                    }
-                                    true
-                                }
-                                _ => false,
-                            })
-                            .collect::<String>();
-                        if s.contains(&complete_string) {
-                            ToDo::from(
-                                s.trim_start_matches(&complete_string).to_string(),
-                                true,
-                                indent,
-                            )
-                        } else {
-                            ToDo::from(
-                                s.trim_start_matches(&todo_string).to_string(),
-                                false,
-                                indent,
-                            )
-                        }
-                    }).collect();
+                                true
+                            }
+                            _ => false,
+                        })
+                        .collect::<String>();
+                    if s.contains(&complete_string) {
+                        ToDo::from(
+                            s.trim_start_matches(&complete_string).to_string(),
+                            true,
+                            indent,
+                        )
+                    } else {
+                        ToDo::from(
+                            s.trim_start_matches(&todo_string).to_string(),
+                            false,
+                            indent,
+                        )
+                    }
+                })
+                .collect();
         }
         Ok(())
     }
@@ -390,10 +395,10 @@ impl<'a> UIMut<'a> {
                 let chunks = ui.main_layout(f);
                 let middle_chunks = ui.add_note_layout(f);
 
-                ui.header(f, &chunks[0]);
+                ui.draw_header(f, &chunks[0]);
                 f.render_widget(textarea.widget(), middle_chunks[0]);
                 f.render_stateful_widget(list, middle_chunks[1], &mut state);
-                ui.footer(f, &chunks[2]);
+                ui.draw_footer(f, &chunks[2]);
             })?;
             match focus_input {
                 true => match crossterm::event::read()?.into() {
@@ -408,7 +413,8 @@ impl<'a> UIMut<'a> {
                         self.app.add_note(
                             textarea
                                 .lines()
-                                .iter().cloned()
+                                .iter()
+                                .cloned()
                                 .skip_while(|s| s.is_empty())
                                 .collect::<Vec<_>>()
                                 .concat(),
@@ -474,10 +480,10 @@ impl<'a> UIMut<'a> {
                             terminal.draw(|f| {
                                 let chunks = ui.main_layout(f);
                                 let middle_chunks = ui.add_note_layout(f);
-                                ui.header(f, &chunks[0]);
+                                ui.draw_header(f, &chunks[0]);
                                 f.render_widget(textarea.widget(), middle_chunks[0]);
                                 f.render_widget(new_text_area.widget(), middle_chunks[1]);
-                                ui.footer(f, &chunks[2]);
+                                ui.draw_footer(f, &chunks[2]);
                             })?;
                             match crossterm::event::read()?.into() {
                                 Input { key: Key::Esc, .. }
@@ -568,8 +574,8 @@ impl<'a> UIMut<'a> {
                 let widget = textarea.widget();
                 let ui = UI::new(self.app);
                 let chunks = ui.main_layout(f);
-                ui.header(f, &chunks[0]);
-                ui.notes(f, &chunks[1]);
+                ui.draw_header(f, &chunks[0]);
+                ui.draw_notes(f, &chunks[1]);
                 f.render_widget(widget, chunks[2]);
             })?;
             match crossterm::event::read()?.into() {
@@ -602,13 +608,13 @@ impl<'a> UI<'a> {
     pub fn new(app: &'a App) -> UI<'a> {
         UI {
             app,
-            colors: &app.config.user.colors,
-            layout: &app.config.user.layout,
-            edit: &app.config.user.edit,
+            colors: &app.config.colors,
+            layout: &app.config.layout,
+            edit: &app.config.edit
         }
     }
 
-    pub fn help(&self, f: &mut Frame, chunk: &Rect) {
+    pub fn draw_help(&self, f: &mut Frame, chunk: &Rect) {
         let popup_block = Block::default()
             .title("Help")
             .title_alignment(Alignment::Center)
@@ -632,7 +638,7 @@ impl<'a> UI<'a> {
         f.render_widget(help_paragraph, area);
     }
 
-    pub fn header(&self, f: &mut Frame, chunk: &Rect) {
+    pub fn draw_header(&self, f: &mut Frame, chunk: &Rect) {
         if !self.layout.header {
             return;
         }
@@ -641,7 +647,7 @@ impl<'a> UI<'a> {
             .style(Style::default().fg(self.colors.header));
 
         let title = Paragraph::new(Text::styled(
-            "keepTUI",
+            "keep",
             Style::default().fg(self.colors.title),
         ))
         .block(title_block)
@@ -650,7 +656,7 @@ impl<'a> UI<'a> {
         f.render_widget(title, *chunk);
     }
 
-    pub fn notes(&self, f: &mut Frame, chunk: &Rect) {
+    pub fn draw_notes(&self, f: &mut Frame, chunk: &Rect) {
         if !matches!(
             self.app.current_screen,
             CurrentScreen::Main | CurrentScreen::Command
@@ -741,10 +747,11 @@ impl<'a> UI<'a> {
             CurrentScreen::Command => todo!(),
             CurrentScreen::NoteEdit => todo!(),
             CurrentScreen::Help => todo!(),
+            CurrentScreen::NoteSearch => todo!(),
         }
     }
 
-    pub fn footer(&self, f: &mut Frame, chunk: &Rect) {
+    pub fn draw_footer(&self, f: &mut Frame, chunk: &Rect) {
         if !self.layout.footer {
             return;
         }
@@ -781,7 +788,7 @@ impl<'a> UI<'a> {
         f.render_widget(key_notes_footer, footer_chunk[1]);
     }
 
-    pub fn exit(&self, f: &mut Frame, chunk: &Rect) {
+    pub fn draw_exit(&self, f: &mut Frame, chunk: &Rect) {
         let popup_block = Block::default()
             .title("Y/N")
             .title_style(self.colors.text)
@@ -802,16 +809,16 @@ impl<'a> UI<'a> {
         f.render_widget(exit_paragraph, area);
     }
 
-    pub fn run(&self, f: &mut Frame) {
+    pub fn draw(&self, f: &mut Frame) {
         let chunks = self.main_layout(f);
 
-        self.header(f, &chunks[0]);
-        self.footer(f, &chunks[2]);
+        self.draw_header(f, &chunks[0]);
+        self.draw_footer(f, &chunks[2]);
 
         match self.app.current_screen {
-            CurrentScreen::Main => self.notes(f, &chunks[1]),
-            CurrentScreen::Exiting => self.exit(f, &chunks[1]),
-            CurrentScreen::Help => self.help(f, &chunks[1]),
+            CurrentScreen::Main => self.draw_notes(f, &chunks[1]),
+            CurrentScreen::Exiting => self.draw_exit(f, &chunks[1]),
+            CurrentScreen::Help => self.draw_help(f, &chunks[1]),
             _ => {}
         }
     }
@@ -827,8 +834,8 @@ impl<'a> UI<'a> {
         );
         terminal.draw(|f| {
             let chunks = self.main_layout(f);
-            self.header(f, &chunks[0]);
-            self.notes(f, &chunks[1]);
+            self.draw_header(f, &chunks[0]);
+            self.draw_notes(f, &chunks[1]);
             let err_block = Paragraph::new(Line::from(text)).block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -846,8 +853,8 @@ impl<'a> UI<'a> {
         );
         terminal.draw(|f| {
             let chunks = self.main_layout(f);
-            self.header(f, &chunks[0]);
-            self.notes(f, &chunks[1]);
+            self.draw_header(f, &chunks[0]);
+            self.draw_notes(f, &chunks[1]);
             let err_block =
                 Paragraph::new(Line::from(text)).block(Block::default().borders(Borders::ALL));
             f.render_widget(err_block, chunks[2]);
